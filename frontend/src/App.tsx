@@ -1,4 +1,4 @@
-import { useState } from "react"
+import { useEffect, useState } from "react"
 import {
   Bar,
   BarChart,
@@ -60,35 +60,7 @@ const collaboratorGroups: CollaboratorGroup[] = [
 
 const chartColors = ["#facc15", "#2563eb", "#16a34a", "#dc2626", "#9333ea"]
 
-const initialParts: Part[] = [
-  {
-    id: 1,
-    name: "STM32 Nucleo Board",
-    category: "Microcontroller",
-    reference: "NUCLEO-F446RE",
-    quantity: 12,
-    location: "Lab A - Shelf 1",
-    status: "Available",
-  },
-  {
-    id: 2,
-    name: "Ultrasonic Sensor",
-    category: "Sensor",
-    reference: "HC-SR04",
-    quantity: 5,
-    location: "Lab B - Box 3",
-    status: "Low Stock",
-  },
-  {
-    id: 3,
-    name: "Raspberry Pi 4",
-    category: "Development Board",
-    reference: "RPi-4B",
-    quantity: 3,
-    location: "Cabinet C2",
-    status: "Borrowed",
-  },
-]
+const PARTS_API_URL = "http://localhost:3001/parts"
 
 const initialReservations: Reservation[] = [
   {
@@ -146,11 +118,37 @@ const initialCollaborators: Collaborator[] = [
 
 function App() {
   const [activePage, setActivePage] = useState("Dashboard")
-  const [parts, setParts] = useState<Part[]>(initialParts)
+  const [parts, setParts] = useState<Part[]>([])
+  const [isLoadingParts, setIsLoadingParts] = useState(true)
+  const [partsError, setPartsError] = useState<string | null>(null)
   const [reservations, setReservations] =
     useState<Reservation[]>(initialReservations)
   const [collaborators, setCollaborators] =
     useState<Collaborator[]>(initialCollaborators)
+
+  async function loadParts() {
+    try {
+      setIsLoadingParts(true)
+      setPartsError(null)
+
+      const response = await fetch(PARTS_API_URL)
+
+      if (!response.ok) {
+        throw new Error("Failed to load parts")
+      }
+
+      const data = (await response.json()) as Part[]
+      setParts(data)
+    } catch {
+      setPartsError("Failed to load parts from backend")
+    } finally {
+      setIsLoadingParts(false)
+    }
+  }
+
+  useEffect(() => {
+    loadParts()
+  }, [])
 
   return (
     <div className="min-h-screen bg-gray-100">
@@ -191,7 +189,15 @@ function App() {
               collaborators={collaborators}
             />
           )}
-          {activePage === "Inventory" && <Inventory parts={parts} setParts={setParts} />}
+          {activePage === "Inventory" && (
+            <Inventory
+              parts={parts}
+              isLoadingParts={isLoadingParts}
+              partsError={partsError}
+              reloadParts={loadParts}
+              setPartsError={setPartsError}
+            />
+          )}
           {activePage === "Reservations" && (
             <Reservations
               parts={parts}
@@ -658,10 +664,16 @@ function Analytics({
 
 function Inventory({
   parts,
-  setParts,
+  isLoadingParts,
+  partsError,
+  reloadParts,
+  setPartsError,
 }: {
   parts: Part[]
-  setParts: React.Dispatch<React.SetStateAction<Part[]>>
+  isLoadingParts: boolean
+  partsError: string | null
+  reloadParts: () => Promise<void>
+  setPartsError: React.Dispatch<React.SetStateAction<string | null>>
 }) {
   const [search, setSearch] = useState("")
   const [category, setCategory] = useState("All Categories")
@@ -679,19 +691,51 @@ function Inventory({
     return matchesSearch && matchesCategory
   })
 
-  function handleDelete(id: number) {
-    setParts(parts.filter((part) => part.id !== id))
+  async function handleDelete(id: number) {
+    try {
+      setPartsError(null)
+
+      const response = await fetch(`${PARTS_API_URL}/${id}`, {
+        method: "DELETE",
+      })
+
+      if (!response.ok) {
+        throw new Error("Failed to delete part")
+      }
+
+      await reloadParts()
+    } catch {
+      setPartsError("Failed to delete part")
+    }
   }
 
-  function handleSave(part: Part) {
-    if (editingPart) {
-      setParts(parts.map((p) => (p.id === part.id ? part : p)))
-    } else {
-      setParts([...parts, { ...part, id: Date.now() }])
-    }
+  async function handleSave(part: Part) {
+    const { id, ...partPayload } = part
 
-    setIsModalOpen(false)
-    setEditingPart(null)
+    try {
+      setPartsError(null)
+
+      const response = await fetch(
+        editingPart ? `${PARTS_API_URL}/${id}` : PARTS_API_URL,
+        {
+          method: editingPart ? "PUT" : "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify(partPayload),
+        }
+      )
+
+      if (!response.ok) {
+        throw new Error(editingPart ? "Failed to update part" : "Failed to create part")
+      }
+
+      await reloadParts()
+      setIsModalOpen(false)
+      setEditingPart(null)
+    } catch {
+      setPartsError(editingPart ? "Failed to update part" : "Failed to create part")
+    }
   }
 
   return (
@@ -708,6 +752,18 @@ function Inventory({
       </div>
 
       <div className="bg-white rounded-lg shadow p-6">
+        {isLoadingParts && (
+          <div className="mb-6 rounded border border-gray-200 bg-gray-50 px-4 py-3 text-gray-600">
+            Loading parts...
+          </div>
+        )}
+
+        {partsError && (
+          <div className="mb-6 rounded border border-red-200 bg-red-50 px-4 py-3 text-red-700">
+            {partsError}
+          </div>
+        )}
+
         <div className="flex gap-4 mb-6">
           <input
             type="text"

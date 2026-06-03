@@ -8,7 +8,7 @@ async function bootstrap() {
     origin: 'http://localhost:5173',
   });
 
-  await app.listen(3001);
+  await app.listen(Number(process.env.BACKEND_PORT || 3001));
 }
 
 bootstrap();

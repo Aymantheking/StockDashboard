@@ -1,5 +1,6 @@
 import { Body, Controller, Delete, Get, Param, ParseIntPipe, Post, Put } from "@nestjs/common"
-import { Part, PartsService } from "./parts.service"
+import { Part } from "./part.entity"
+import { PartsService } from "./parts.service"
 
 @Controller("parts")
 export class PartsController {

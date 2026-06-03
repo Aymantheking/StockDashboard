@@ -6,6 +6,8 @@ import {
 } from "@nestjs/common"
 import { InjectRepository } from "@nestjs/typeorm"
 import { Repository } from "typeorm"
+import { AuthenticatedUser } from "../../common/authenticated-request"
+import { UserRole } from "../users/user.entity"
 import {
   Collaborator,
   CollaboratorGroup,
@@ -65,6 +67,19 @@ export class CollaboratorsService implements OnModuleInit {
 
   findAll() {
     return this.collaboratorsRepository.find({ order: { id: "ASC" } })
+  }
+
+  async findAllForUser(user: AuthenticatedUser) {
+    if (user.role === UserRole.InventoryManager) {
+      return this.collaboratorsRepository.find({
+        where: {
+          division: (user.managedDivision || user.division) as Division,
+        },
+        order: { id: "ASC" },
+      })
+    }
+
+    return this.findAll()
   }
 
   async findOne(id: number) {

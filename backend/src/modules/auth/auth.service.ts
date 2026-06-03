@@ -12,7 +12,6 @@ type RegisterInput = {
   name: string
   email: string
   password: string
-  role: UserRole
   division: Division
   group: CollaboratorGroup
 }
@@ -25,7 +24,15 @@ export class AuthService {
   ) {}
 
   async register(input: RegisterInput) {
-    const user = await this.usersService.create(input)
+    if (!input.email?.toLowerCase().endsWith("@bertrandt.com")) {
+      throw new BadRequestException("Email must end with @bertrandt.com")
+    }
+
+    const user = await this.usersService.create({
+      ...input,
+      role: UserRole.Collaborator,
+      managedDivision: null,
+    })
 
     return this.createAuthResponse(user.id)
   }

@@ -48,6 +48,15 @@ export class PartRequest {
   @Column({ type: "date" })
   expectedReturnDate: string
 
+  @Column({ nullable: true, type: "date" })
+  usageDate: string | null
+
+  @Column({ nullable: true, type: "date" })
+  startDate: string | null
+
+  @Column({ nullable: true, type: "date" })
+  dueDate: string | null
+
   @Column({ type: "enum", enum: RequestStatus, default: RequestStatus.Pending })
   status: RequestStatus
 

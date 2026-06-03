@@ -22,7 +22,10 @@ type CreateRequestInput = {
   quantity: number
   requestType: RequestType
   reason: string
-  expectedReturnDate: string
+  expectedReturnDate?: string
+  usageDate?: string
+  startDate?: string
+  dueDate?: string
 }
 
 @Injectable()
@@ -75,7 +78,10 @@ export class RequestsService {
       quantity: input.quantity,
       requestType: input.requestType,
       reason: input.reason.trim(),
-      expectedReturnDate: input.expectedReturnDate,
+      expectedReturnDate: this.getExpectedReturnDate(input),
+      usageDate: input.requestType === RequestType.Reservation ? input.usageDate : null,
+      startDate: input.requestType === RequestType.Borrow ? input.startDate : null,
+      dueDate: input.requestType === RequestType.Borrow ? input.dueDate : null,
       status: RequestStatus.Pending,
       managerComment: "",
     })
@@ -196,9 +202,31 @@ export class RequestsService {
       throw new BadRequestException("reason is required")
     }
 
-    if (!input.expectedReturnDate) {
-      throw new BadRequestException("expectedReturnDate is required")
+    if (input.requestType === RequestType.Reservation && !input.usageDate) {
+      throw new BadRequestException("usageDate is required for reservations")
     }
+
+    if (input.requestType === RequestType.Borrow) {
+      if (!input.startDate) {
+        throw new BadRequestException("startDate is required for borrowing")
+      }
+
+      if (!input.dueDate) {
+        throw new BadRequestException("dueDate is required for borrowing")
+      }
+
+      if (input.dueDate < input.startDate) {
+        throw new BadRequestException("dueDate must be after or equal startDate")
+      }
+    }
+  }
+
+  private getExpectedReturnDate(input: CreateRequestInput) {
+    if (input.requestType === RequestType.Reservation) {
+      return input.usageDate
+    }
+
+    return input.dueDate
   }
 
   private async resolveCollaborator(

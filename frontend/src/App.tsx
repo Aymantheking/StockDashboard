@@ -1,4 +1,4 @@
-import { useState } from "react"
+import { useEffect, useState } from "react"
 import {
   Bar,
   BarChart,
@@ -23,11 +23,18 @@ type Part = {
 
 type Reservation = {
   id: number
+  collaboratorId: number
+  partId: number
   collaborator: string
   partName: string
   quantity: number
   expectedReturnDate: string
   status: "Reserved" | "Borrowed" | "Returned"
+}
+
+type BackendReservation = Omit<Reservation, "collaborator" | "partName"> & {
+  collaborator?: Collaborator
+  part?: Part
 }
 
 type Division = "Division 1" | "Division 2" | "Division 3" | "Division 4" | "Admin"
@@ -41,6 +48,100 @@ type Collaborator = {
   division: Division
   group: CollaboratorGroup
   role: string
+}
+
+type UserRole = "Admin" | "Inventory Manager" | "Collaborator" | "Viewer"
+
+type AuthUser = {
+  id: number
+  name: string
+  email: string
+  role: UserRole
+  division: Division
+  group: CollaboratorGroup
+  managedDivision: Division | null
+}
+
+type AuthResponse = {
+  accessToken: string
+  user: AuthUser
+}
+
+type ApiFetch = (url: string, options?: RequestInit) => Promise<Response>
+
+type RequestStatus =
+  | "Pending"
+  | "Approved"
+  | "Rejected"
+  | "Borrowed"
+  | "Reserved"
+  | "Returned"
+  | "Cancelled"
+
+type PartRequest = {
+  id: number
+  collaboratorId: number
+  partId: number
+  quantity: number
+  requestType: "Reservation" | "Borrow"
+  reason: string
+  expectedReturnDate: string
+  status: RequestStatus
+  managerComment: string
+  collaborator?: Collaborator
+  part?: Part
+}
+
+type MissingItemRequest = {
+  id: number
+  collaboratorId: number
+  itemName: string
+  category: string
+  manufacturer: string
+  reference: string
+  quantityNeeded: number
+  reason: string
+  neededDate: string
+  status: RequestStatus
+  managerComment: string
+  collaborator?: Collaborator
+}
+
+type AnalyticsSummary = {
+  totalParts: number
+  availableParts: number
+  borrowedParts: number
+  reservedParts: number
+  lowStockParts: number
+  lowStockItems: Part[]
+  totalCollaborators: number
+  activeBorrowers: number
+  totalReservations: number
+  reservedReservations: number
+  borrowedReservations: number
+  returnedReservations: number
+  mostBorrowedParts: { partName: string; borrowCount: number }[]
+  mostActiveCollaborators: {
+    collaboratorName: string
+    reservationCount: number
+    borrowedCount: number
+  }[]
+  inventoryByCategory: { category: string; count: number }[]
+  reservationsByDivision: {
+    division: Division
+    collaborators: number
+    reservationCount: number
+    activeReservations: number
+    borrowedParts: number
+  }[]
+  borrowedPartsByGroup: {
+    group: CollaboratorGroup
+    collaborators: number
+    reservationCount: number
+    activeReservations: number
+    borrowedCount: number
+    borrowedParts: number
+  }[]
 }
 
 const divisions: Division[] = [
@@ -60,97 +161,328 @@ const collaboratorGroups: CollaboratorGroup[] = [
 
 const chartColors = ["#facc15", "#2563eb", "#16a34a", "#dc2626", "#9333ea"]
 
-const initialParts: Part[] = [
-  {
-    id: 1,
-    name: "STM32 Nucleo Board",
-    category: "Microcontroller",
-    reference: "NUCLEO-F446RE",
-    quantity: 12,
-    location: "Lab A - Shelf 1",
-    status: "Available",
-  },
-  {
-    id: 2,
-    name: "Ultrasonic Sensor",
-    category: "Sensor",
-    reference: "HC-SR04",
-    quantity: 5,
-    location: "Lab B - Box 3",
-    status: "Low Stock",
-  },
-  {
-    id: 3,
-    name: "Raspberry Pi 4",
-    category: "Development Board",
-    reference: "RPi-4B",
-    quantity: 3,
-    location: "Cabinet C2",
-    status: "Borrowed",
-  },
+const PARTS_API_URL = "http://localhost:3001/parts"
+const COLLABORATORS_API_URL = "http://localhost:3001/collaborators"
+const RESERVATIONS_API_URL = "http://localhost:3001/reservations"
+const ANALYTICS_API_URL = "http://localhost:3001/analytics/summary"
+const AUTH_API_URL = "http://localhost:3001/auth"
+const USERS_API_URL = "http://localhost:3001/users"
+const REQUESTS_API_URL = "http://localhost:3001/requests"
+const MISSING_ITEM_REQUESTS_API_URL =
+  "http://localhost:3001/missing-item-requests"
+
+const partCategories = [
+  "Microprocessors",
+  "Microcontrollers",
+  "PCBs",
+  "Sensors",
+  "Actuators",
+  "Development Boards",
+  "Communication Modules",
+  "Connectors",
+  "Cables",
+  "Power Modules",
+  "Test Equipment",
+  "Tools",
+  "Other",
 ]
 
-const initialReservations: Reservation[] = [
-  {
-    id: 1,
-    collaborator: "Ahmed B.",
-    partName: "Raspberry Pi 4",
-    quantity: 1,
-    expectedReturnDate: "2026-06-10",
-    status: "Borrowed",
-  },
-  {
-    id: 2,
-    collaborator: "Sara M.",
-    partName: "Ultrasonic Sensor",
-    quantity: 2,
-    expectedReturnDate: "2026-06-07",
-    status: "Reserved",
-  },
-]
+function getStoredUser() {
+  const storedUser = localStorage.getItem("stockdashboard_user")
 
-const initialCollaborators: Collaborator[] = [
-  {
-    id: 1,
-    name: "Ayman Douah",
-    email: "ayman.douah@bertrandt.com",
-    division: "Admin",
-    group: "Group 1",
-    role: "Inventory Manager",
-  },
-  {
-    id: 2,
-    name: "Ahmed B.",
-    email: "ahmed.b@bertrandt.com",
-    division: "Division 1",
-    group: "Group 2",
-    role: "Embedded Engineer",
-  },
-  {
-    id: 3,
-    name: "Sara M.",
-    email: "sara.m@bertrandt.com",
-    division: "Division 2",
-    group: "Group 3",
-    role: "Validation Engineer",
-  },
-  {
-    id: 4,
-    name: "Youssef A.",
-    email: "youssef.a@bertrandt.com",
-    division: "Division 3",
-    group: "Group 4",
-    role: "Hardware Technician",
-  },
-]
+  if (!storedUser) {
+    return null
+  }
+
+  try {
+    return JSON.parse(storedUser) as AuthUser
+  } catch {
+    localStorage.removeItem("stockdashboard_user")
+    return null
+  }
+}
 
 function App() {
   const [activePage, setActivePage] = useState("Dashboard")
-  const [parts, setParts] = useState<Part[]>(initialParts)
-  const [reservations, setReservations] =
-    useState<Reservation[]>(initialReservations)
-  const [collaborators, setCollaborators] =
-    useState<Collaborator[]>(initialCollaborators)
+  const [authToken, setAuthToken] = useState(
+    () => localStorage.getItem("stockdashboard_token") || ""
+  )
+  const [currentUser, setCurrentUser] = useState<AuthUser | null>(getStoredUser)
+  const [authError, setAuthError] = useState("")
+  const [parts, setParts] = useState<Part[]>([])
+  const [isLoadingParts, setIsLoadingParts] = useState(true)
+  const [partsError, setPartsError] = useState<string | null>(null)
+  const [reservations, setReservations] = useState<Reservation[]>([])
+  const [isLoadingReservations, setIsLoadingReservations] = useState(true)
+  const [reservationsError, setReservationsError] = useState<string | null>(
+    null
+  )
+  const [collaborators, setCollaborators] = useState<Collaborator[]>([])
+  const [isLoadingCollaborators, setIsLoadingCollaborators] = useState(true)
+  const [collaboratorsError, setCollaboratorsError] = useState<string | null>(
+    null
+  )
+  const [analyticsSummary, setAnalyticsSummary] =
+    useState<AnalyticsSummary | null>(null)
+  const [isLoadingAnalytics, setIsLoadingAnalytics] = useState(true)
+  const [analyticsError, setAnalyticsError] = useState<string | null>(null)
+  const [partRequests, setPartRequests] = useState<PartRequest[]>([])
+  const [missingItemRequests, setMissingItemRequests] = useState<
+    MissingItemRequest[]
+  >([])
+  const [isLoadingRequests, setIsLoadingRequests] = useState(true)
+  const [requestsError, setRequestsError] = useState<string | null>(null)
+  const [users, setUsers] = useState<AuthUser[]>([])
+  const [usersError, setUsersError] = useState<string | null>(null)
+  const [isNotificationOpen, setIsNotificationOpen] = useState(false)
+  const [viewedNotifications, setViewedNotifications] = useState<string[]>(() => {
+    const storedNotifications = localStorage.getItem(
+      "stockdashboard_viewed_notifications"
+    )
+
+    return storedNotifications ? JSON.parse(storedNotifications) : []
+  })
+
+  function handleLogout(message = "") {
+    localStorage.removeItem("stockdashboard_token")
+    localStorage.removeItem("stockdashboard_user")
+    setAuthToken("")
+    setCurrentUser(null)
+    setAuthError(message)
+    setActivePage("Dashboard")
+  }
+
+  function handleLogin(authResponse: AuthResponse) {
+    localStorage.setItem("stockdashboard_token", authResponse.accessToken)
+    localStorage.setItem("stockdashboard_user", JSON.stringify(authResponse.user))
+    setAuthToken(authResponse.accessToken)
+    setCurrentUser(authResponse.user)
+    setAuthError("")
+    setActivePage("Dashboard")
+  }
+
+  async function apiFetch(url: string, options: RequestInit = {}) {
+    const headers = new Headers(options.headers)
+    headers.set("Authorization", `Bearer ${authToken}`)
+
+    const response = await fetch(url, {
+      ...options,
+      headers,
+    })
+
+    if (response.status === 401) {
+      handleLogout("Your session has expired. Please log in again.")
+    }
+
+    return response
+  }
+
+  async function loadParts() {
+    try {
+      setIsLoadingParts(true)
+      setPartsError(null)
+
+      const response = await apiFetch(PARTS_API_URL)
+
+      if (!response.ok) {
+        throw new Error("Failed to load parts")
+      }
+
+      const data = (await response.json()) as Part[]
+      setParts(data)
+    } catch {
+      setPartsError("Failed to load parts from backend")
+    } finally {
+      setIsLoadingParts(false)
+    }
+  }
+
+  async function loadCollaborators() {
+    try {
+      setIsLoadingCollaborators(true)
+      setCollaboratorsError(null)
+
+      const response = await apiFetch(COLLABORATORS_API_URL)
+
+      if (!response.ok) {
+        throw new Error("Failed to load collaborators")
+      }
+
+      const data = (await response.json()) as Collaborator[]
+      setCollaborators(data)
+    } catch {
+      setCollaboratorsError("Failed to load collaborators from backend")
+    } finally {
+      setIsLoadingCollaborators(false)
+    }
+  }
+
+  async function loadReservations() {
+    try {
+      setIsLoadingReservations(true)
+      setReservationsError(null)
+
+      const response = await apiFetch(RESERVATIONS_API_URL)
+
+      if (!response.ok) {
+        throw new Error("Failed to load reservations")
+      }
+
+      const data = (await response.json()) as BackendReservation[]
+      setReservations(data.map(mapBackendReservation))
+    } catch {
+      setReservationsError("Failed to load reservations from backend")
+    } finally {
+      setIsLoadingReservations(false)
+    }
+  }
+
+  async function loadAnalytics() {
+    try {
+      setIsLoadingAnalytics(true)
+      setAnalyticsError(null)
+
+      const response = await apiFetch(ANALYTICS_API_URL)
+
+      if (!response.ok) {
+        throw new Error("Failed to load analytics")
+      }
+
+      const data = (await response.json()) as AnalyticsSummary
+      setAnalyticsSummary(data)
+    } catch {
+      setAnalyticsError("Failed to load analytics")
+    } finally {
+      setIsLoadingAnalytics(false)
+    }
+  }
+
+  async function loadRequests() {
+    try {
+      setIsLoadingRequests(true)
+      setRequestsError(null)
+
+      const requestsEndpoint =
+        currentUser?.role === "Collaborator"
+          ? `${REQUESTS_API_URL}/my`
+          : REQUESTS_API_URL
+      const missingRequestsEndpoint =
+        currentUser?.role === "Collaborator"
+          ? `${MISSING_ITEM_REQUESTS_API_URL}/my`
+          : MISSING_ITEM_REQUESTS_API_URL
+
+      const [requestsResponse, missingRequestsResponse] = await Promise.all([
+        apiFetch(requestsEndpoint),
+        apiFetch(missingRequestsEndpoint),
+      ])
+
+      if (!requestsResponse.ok || !missingRequestsResponse.ok) {
+        throw new Error("Failed to load requests")
+      }
+
+      setPartRequests((await requestsResponse.json()) as PartRequest[])
+      setMissingItemRequests(
+        (await missingRequestsResponse.json()) as MissingItemRequest[]
+      )
+    } catch {
+      setRequestsError("Failed to load requests")
+    } finally {
+      setIsLoadingRequests(false)
+    }
+  }
+
+  async function loadUsers() {
+    if (currentUser?.role !== "Admin") {
+      return
+    }
+
+    try {
+      setUsersError(null)
+      const response = await apiFetch(USERS_API_URL)
+
+      if (!response.ok) {
+        throw new Error("Failed to load users")
+      }
+
+      setUsers((await response.json()) as AuthUser[])
+    } catch {
+      setUsersError("Failed to load users")
+    }
+  }
+
+  useEffect(() => {
+    if (!authToken || !currentUser) {
+      return
+    }
+
+    loadParts()
+
+    if (currentUser.role !== "Viewer") {
+      loadRequests()
+    }
+
+    if (currentUser.role !== "Collaborator") {
+      loadCollaborators()
+      loadReservations()
+      loadAnalytics()
+    }
+
+    if (currentUser.role === "Admin") {
+      loadUsers()
+    }
+  }, [authToken])
+
+  if (!authToken || !currentUser) {
+    return (
+      <LoginPage
+        authError={authError}
+        onLogin={handleLogin}
+        setAuthError={setAuthError}
+      />
+    )
+  }
+
+  const pages = getVisiblePages(currentUser)
+  const canManageParts = hasRole(currentUser, ["Admin", "Inventory Manager"])
+  const canManageCollaborators = hasRole(currentUser, ["Admin"])
+  const canCreateReservations = hasRole(currentUser, [
+    "Admin",
+    "Inventory Manager",
+    "Collaborator",
+  ])
+  const canManageReservations = hasRole(currentUser, [
+    "Admin",
+    "Inventory Manager",
+  ])
+  const canApproveRequests = hasRole(currentUser, ["Admin", "Inventory Manager"])
+  const canRequestParts = hasRole(currentUser, ["Collaborator"])
+  const activeVisiblePage = pages.includes(activePage) ? activePage : pages[0]
+  const notificationCount = getNotificationCount(
+    currentUser,
+    partRequests,
+    missingItemRequests,
+    viewedNotifications
+  )
+  const notificationIds = getCollaboratorNotificationIds(
+    partRequests,
+    missingItemRequests
+  )
+
+  function toggleNotifications() {
+    const willOpen = !isNotificationOpen
+    setIsNotificationOpen(willOpen)
+
+    if (willOpen && currentUser?.role === "Collaborator") {
+      const nextViewedNotifications = Array.from(
+        new Set([...viewedNotifications, ...notificationIds])
+      )
+      setViewedNotifications(nextViewedNotifications)
+      localStorage.setItem(
+        "stockdashboard_viewed_notifications",
+        JSON.stringify(nextViewedNotifications)
+      )
+    }
+  }
 
   return (
     <div className="min-h-screen bg-gray-100">
@@ -159,21 +491,71 @@ function App() {
           Bertrandt Inventory System
         </h1>
 
-        <img
-          src="/logo.png"
-          alt="Bertrandt"
-          className="h-24 w-auto object-contain"
-        />
+        <div className="relative flex items-center gap-4">
+          <button
+            onClick={toggleNotifications}
+            className="relative rounded-full border border-gray-700 p-2 text-yellow-400 hover:border-yellow-400"
+            title="Notifications"
+          >
+            <svg
+              className="h-5 w-5"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            >
+              <path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 7h18s-3 0-3-7" />
+              <path d="M13.73 21a2 2 0 0 1-3.46 0" />
+            </svg>
+            {notificationCount > 0 && (
+              <span className="absolute -right-2 -top-2 min-w-5 rounded-full bg-yellow-400 px-1.5 py-0.5 text-xs font-bold text-black">
+                {notificationCount}
+              </span>
+            )}
+          </button>
+
+          {isNotificationOpen && (
+            <NotificationDropdown
+              user={currentUser}
+              partRequests={partRequests}
+              missingItemRequests={missingItemRequests}
+              onNavigate={(page) => {
+                setActivePage(page)
+                setIsNotificationOpen(false)
+              }}
+            />
+          )}
+
+          <div className="hidden sm:block text-right">
+            <p className="text-sm font-semibold">{currentUser.name}</p>
+            <p className="text-xs text-gray-300">{currentUser.role}</p>
+          </div>
+
+          <button
+            onClick={() => handleLogout()}
+            className="rounded border border-yellow-400 px-3 py-2 text-sm font-semibold text-yellow-400 hover:bg-yellow-400 hover:text-black"
+          >
+            Logout
+          </button>
+
+          <img
+            src="/logo.png"
+            alt="Bertrandt"
+            className="h-24 w-auto object-contain"
+          />
+        </div>
       </header>
 
       <div className="flex">
         <aside className="w-64 min-h-screen bg-gray-900 text-white p-4">
-          {["Dashboard", "Inventory", "Reservations", "Collaborators", "Analytics", "Settings"].map(
+          {pages.map(
             (page) => (
               <button
                 key={page}
                 onClick={() => setActivePage(page)}
-                className={`block w-full text-left px-3 py-3 rounded ${activePage === page
+                className={`block w-full text-left px-3 py-3 rounded ${activeVisiblePage === page
                   ? "bg-yellow-400 text-black font-semibold"
                   : "hover:text-yellow-400"
                   }`}
@@ -184,33 +566,100 @@ function App() {
           )}
         </aside>
         <main className="flex-1 p-8">
-          {activePage === "Dashboard" && (
+          {activeVisiblePage === "Dashboard" && (
             <Dashboard
               parts={parts}
               reservations={reservations}
               collaborators={collaborators}
+              analyticsSummary={analyticsSummary}
+              isLoadingAnalytics={isLoadingAnalytics}
+              analyticsError={analyticsError}
             />
           )}
-          {activePage === "Inventory" && <Inventory parts={parts} setParts={setParts} />}
-          {activePage === "Reservations" && (
+          {activeVisiblePage === "Inventory" && (
+            <Inventory
+              parts={parts}
+              isLoadingParts={isLoadingParts}
+              partsError={partsError}
+              apiFetch={apiFetch}
+              reloadParts={loadParts}
+              reloadAnalytics={loadAnalytics}
+              setPartsError={setPartsError}
+              canManageParts={canManageParts}
+              canRequestParts={canRequestParts}
+              reloadRequests={loadRequests}
+            />
+          )}
+          {activeVisiblePage === "Reservations" && (
             <Reservations
               parts={parts}
+              collaborators={collaborators}
               reservations={reservations}
-              setReservations={setReservations}
+              isLoadingReservations={isLoadingReservations}
+              reservationsError={reservationsError}
+              apiFetch={apiFetch}
+              reloadParts={loadParts}
+              reloadReservations={loadReservations}
+              reloadAnalytics={loadAnalytics}
+              setReservationsError={setReservationsError}
+              canCreateReservations={canCreateReservations}
+              canManageReservations={canManageReservations}
             />
           )}
-          {activePage === "Collaborators" && (
+          {activeVisiblePage === "Collaborators" && (
             <Collaborators
               collaborators={collaborators}
+              isLoadingCollaborators={isLoadingCollaborators}
+              collaboratorsError={collaboratorsError}
               reservations={reservations}
-              setCollaborators={setCollaborators}
+              apiFetch={apiFetch}
+              reloadCollaborators={loadCollaborators}
+              reloadAnalytics={loadAnalytics}
+              setCollaboratorsError={setCollaboratorsError}
+              canManageCollaborators={canManageCollaborators}
             />
           )}
-          {activePage === "Analytics" && (
+          {activeVisiblePage === "Analytics" && (
             <Analytics
-              parts={parts}
-              reservations={reservations}
+              analyticsSummary={analyticsSummary}
+              isLoadingAnalytics={isLoadingAnalytics}
+              analyticsError={analyticsError}
+            />
+          )}
+          {activeVisiblePage === "Requests" && (
+            <RequestsPage
+              partRequests={partRequests}
+              missingItemRequests={missingItemRequests}
+              isLoadingRequests={isLoadingRequests}
+              requestsError={requestsError}
+              apiFetch={apiFetch}
+              reloadParts={loadParts}
+              reloadRequests={loadRequests}
+              reloadAnalytics={loadAnalytics}
+              setRequestsError={setRequestsError}
+              canApproveRequests={canApproveRequests}
+            />
+          )}
+          {(activeVisiblePage === "My Requests" ||
+            activeVisiblePage === "Notifications") && (
+              <MyRequestsPage
+                partRequests={partRequests}
+                missingItemRequests={missingItemRequests}
+                isLoadingRequests={isLoadingRequests}
+                requestsError={requestsError}
+                apiFetch={apiFetch}
+                reloadRequests={loadRequests}
+                setRequestsError={setRequestsError}
+              />
+            )}
+          {activeVisiblePage === "Settings" && (
+            <SettingsPage
+              users={users}
               collaborators={collaborators}
+              usersError={usersError}
+              apiFetch={apiFetch}
+              reloadUsers={loadUsers}
+              setUsersError={setUsersError}
             />
           )}
         </main>
@@ -219,8 +668,306 @@ function App() {
   )
 }
 
+function hasRole(user: AuthUser, roles: UserRole[]) {
+  return roles.includes(user.role)
+}
+
+function getVisiblePages(user: AuthUser) {
+  if (user.role === "Collaborator") {
+    return ["Inventory", "My Requests"]
+  }
+
+  if (user.role === "Admin") {
+    return [
+      "Dashboard",
+      "Inventory",
+      "Reservations",
+      "Collaborators",
+      "Analytics",
+      "Requests",
+      "Settings",
+    ]
+  }
+
+  if (user.role === "Inventory Manager") {
+    return [
+      "Dashboard",
+      "Inventory",
+      "Reservations",
+      "Collaborators",
+      "Analytics",
+      "Requests",
+    ]
+  }
+
+  return ["Dashboard", "Inventory", "Reservations", "Analytics"]
+}
+
+function LoginPage({
+  authError,
+  onLogin,
+  setAuthError,
+}: {
+  authError: string
+  onLogin: (authResponse: AuthResponse) => void
+  setAuthError: React.Dispatch<React.SetStateAction<string>>
+}) {
+  const [email, setEmail] = useState("admin@stockdashboard.local")
+  const [password, setPassword] = useState("admin123")
+  const [isSubmitting, setIsSubmitting] = useState(false)
+
+  async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+
+    try {
+      setIsSubmitting(true)
+      setAuthError("")
+
+      const response = await fetch(`${AUTH_API_URL}/login`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ email, password }),
+      })
+
+      if (!response.ok) {
+        throw new Error("Login failed")
+      }
+
+      const authResponse = (await response.json()) as AuthResponse
+      onLogin(authResponse)
+    } catch {
+      setAuthError("Invalid email or password. Please try again.")
+    } finally {
+      setIsSubmitting(false)
+    }
+  }
+
+  return (
+    <div className="min-h-screen bg-gray-100 flex items-center justify-center p-6">
+      <div className="w-full max-w-md bg-white rounded-lg shadow p-8">
+        <div className="flex items-center justify-between mb-8">
+          <div>
+            <h1 className="text-2xl font-bold">Stock Dashboard</h1>
+            <p className="text-sm text-gray-500">Local access</p>
+          </div>
+
+          <img
+            src="/logo.png"
+            alt="Bertrandt"
+            className="h-12 w-auto object-contain"
+          />
+        </div>
+
+        {authError && (
+          <div className="mb-5 rounded border border-red-200 bg-red-50 px-4 py-3 text-red-700">
+            {authError}
+          </div>
+        )}
+
+        <form onSubmit={handleSubmit} className="space-y-4">
+          <div>
+            <label className="block text-sm font-semibold mb-2">Email</label>
+            <input
+              type="email"
+              value={email}
+              onChange={(event) => setEmail(event.target.value)}
+              className="w-full rounded border border-gray-300 px-4 py-2"
+              required
+            />
+          </div>
+
+          <div>
+            <label className="block text-sm font-semibold mb-2">Password</label>
+            <input
+              type="password"
+              value={password}
+              onChange={(event) => setPassword(event.target.value)}
+              className="w-full rounded border border-gray-300 px-4 py-2"
+              required
+            />
+          </div>
+
+          <button
+            type="submit"
+            disabled={isSubmitting}
+            className="w-full rounded bg-yellow-400 px-4 py-2 font-semibold text-black disabled:opacity-60"
+          >
+            {isSubmitting ? "Signing in..." : "Login"}
+          </button>
+        </form>
+      </div>
+    </div>
+  )
+}
+
+function getCollaboratorNotificationIds(
+  partRequests: PartRequest[],
+  missingItemRequests: MissingItemRequest[]
+) {
+  const partNotificationIds = partRequests
+    .filter((request) => request.status === "Reserved" || request.status === "Borrowed" || request.status === "Rejected")
+    .map((request) => `part-${request.id}-${request.status}`)
+  const missingNotificationIds = missingItemRequests
+    .filter((request) => request.status === "Approved" || request.status === "Rejected")
+    .map((request) => `missing-${request.id}-${request.status}`)
+
+  return [...partNotificationIds, ...missingNotificationIds]
+}
+
+function getNotificationCount(
+  user: AuthUser,
+  partRequests: PartRequest[],
+  missingItemRequests: MissingItemRequest[],
+  viewedNotifications: string[]
+) {
+  if (user.role === "Admin" || user.role === "Inventory Manager") {
+    return (
+      partRequests.filter((request) => request.status === "Pending").length +
+      missingItemRequests.filter((request) => request.status === "Pending").length
+    )
+  }
+
+  if (user.role === "Collaborator") {
+    return getCollaboratorNotificationIds(partRequests, missingItemRequests).filter(
+      (notificationId) => !viewedNotifications.includes(notificationId)
+    ).length
+  }
+
+  return 0
+}
+
+function NotificationDropdown({
+  user,
+  partRequests,
+  missingItemRequests,
+  onNavigate,
+}: {
+  user: AuthUser
+  partRequests: PartRequest[]
+  missingItemRequests: MissingItemRequest[]
+  onNavigate: (page: string) => void
+}) {
+  const isManagerView = user.role === "Admin" || user.role === "Inventory Manager"
+  const managerPartRequests = partRequests.filter(
+    (request) => request.status === "Pending"
+  )
+  const managerMissingRequests = missingItemRequests.filter(
+    (request) => request.status === "Pending"
+  )
+  const collaboratorPartRequests = partRequests.filter(
+    (request) =>
+      request.status === "Reserved" ||
+      request.status === "Borrowed" ||
+      request.status === "Rejected"
+  )
+  const collaboratorMissingRequests = missingItemRequests.filter(
+    (request) => request.status === "Approved" || request.status === "Rejected"
+  )
+
+  return (
+    <div className="absolute right-0 top-14 z-20 w-96 rounded-lg bg-white p-4 text-black shadow-lg">
+      <div className="mb-3 flex items-center justify-between">
+        <h3 className="font-bold">Notifications</h3>
+        <button
+          onClick={() => onNavigate(isManagerView ? "Requests" : "My Requests")}
+          className="text-sm font-semibold text-yellow-700"
+        >
+          {isManagerView ? "Open Requests" : "Open My Requests"}
+        </button>
+      </div>
+
+      <div className="max-h-80 space-y-3 overflow-y-auto">
+        {isManagerView ? (
+          <>
+            {managerPartRequests.map((request) => (
+              <NotificationItem
+                key={`part-${request.id}`}
+                title={request.part?.name || "Part request"}
+                meta={`${request.collaborator?.name || "Collaborator"} - Pending`}
+                comment={request.reason}
+              />
+            ))}
+            {managerMissingRequests.map((request) => (
+              <NotificationItem
+                key={`missing-${request.id}`}
+                title={request.itemName}
+                meta={`${request.collaborator?.name || "Collaborator"} - Missing item pending`}
+                comment={request.reason}
+              />
+            ))}
+            {managerPartRequests.length + managerMissingRequests.length === 0 && (
+              <p className="py-6 text-center text-sm text-gray-500">
+                No pending requests.
+              </p>
+            )}
+          </>
+        ) : (
+          <>
+            {collaboratorPartRequests.map((request) => (
+              <NotificationItem
+                key={`part-${request.id}`}
+                title={request.part?.name || "Part request"}
+                meta={`${request.status} - ${request.requestType}`}
+                comment={request.managerComment || "No manager comment yet."}
+              />
+            ))}
+            {collaboratorMissingRequests.map((request) => (
+              <NotificationItem
+                key={`missing-${request.id}`}
+                title={request.itemName}
+                meta={`Missing item ${request.status}`}
+                comment={request.managerComment || "No manager comment yet."}
+              />
+            ))}
+            {collaboratorPartRequests.length +
+              collaboratorMissingRequests.length ===
+              0 && (
+                <p className="py-6 text-center text-sm text-gray-500">
+                  No request updates yet.
+                </p>
+              )}
+          </>
+        )}
+      </div>
+    </div>
+  )
+}
+
+function NotificationItem({
+  title,
+  meta,
+  comment,
+}: {
+  title: string
+  meta: string
+  comment: string
+}) {
+  return (
+    <div className="rounded border border-gray-200 p-3">
+      <p className="font-semibold">{title}</p>
+      <p className="text-sm text-gray-600">{meta}</p>
+      <p className="mt-1 text-sm text-gray-500">{comment}</p>
+    </div>
+  )
+}
+
 function getLowStockParts(parts: Part[]) {
   return parts.filter((part) => part.status === "Low Stock" || part.quantity <= 5)
+}
+
+function mapBackendReservation(reservation: BackendReservation): Reservation {
+  return {
+    id: reservation.id,
+    collaboratorId: reservation.collaboratorId,
+    partId: reservation.partId,
+    collaborator: reservation.collaborator?.name || "Unknown collaborator",
+    partName: reservation.part?.name || "Unknown part",
+    quantity: reservation.quantity,
+    expectedReturnDate: reservation.expectedReturnDate,
+    status: reservation.status,
+  }
 }
 
 function getBorrowedPartRanking(reservations: Reservation[]) {
@@ -285,55 +1032,101 @@ function Dashboard({
   parts,
   reservations,
   collaborators,
+  analyticsSummary,
+  isLoadingAnalytics,
+  analyticsError,
 }: {
   parts: Part[]
   reservations: Reservation[]
   collaborators: Collaborator[]
+  analyticsSummary: AnalyticsSummary | null
+  isLoadingAnalytics: boolean
+  analyticsError: string | null
 }) {
-  const total = parts.length
-  const available = parts.filter((p) => p.status === "Available").length
-  const borrowed = parts.filter((p) => p.status === "Borrowed").length
-  const lowStock = parts.filter((p) => p.status === "Low Stock").length
-  const borrowedReservations = reservations.filter(
+  const localBorrowedReservations = reservations.filter(
     (reservation) => reservation.status === "Borrowed"
   ).length
-  const reservedReservations = reservations.filter(
+  const localReservedReservations = reservations.filter(
     (reservation) => reservation.status === "Reserved"
   ).length
-  const activeBorrowers = getActiveBorrowers(collaborators, reservations)
-  const topBorrowedPart = getBorrowedPartRanking(reservations)[0]
-  const mostActiveCollaborator = getMostActiveCollaborator(
+  const localTopBorrowedPart = getBorrowedPartRanking(reservations)[0]
+  const localMostActiveCollaborator = getMostActiveCollaborator(
     collaborators,
     reservations
   )
-  const lowStockAlertCounter = getLowStockParts(parts).length
+  const topBorrowedPart =
+    analyticsSummary?.mostBorrowedParts[0] || localTopBorrowedPart
+  const mostActiveCollaborator =
+    analyticsSummary?.mostActiveCollaborators[0] || null
+  const localLowStockAlertCounter = getLowStockParts(parts).length
 
   return (
     <>
       <h2 className="text-3xl font-bold mb-8">Dashboard Overview</h2>
 
+      {isLoadingAnalytics && (
+        <div className="bg-white rounded-lg shadow p-4 mb-6">
+          Loading analytics...
+        </div>
+      )}
+
+      {analyticsError && (
+        <div className="bg-red-50 border border-red-200 text-red-700 rounded-lg p-4 mb-6">
+          {analyticsError}
+        </div>
+      )}
+
       <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-6">
-        <StatCard label="Total Parts" value={String(total)} />
-        <StatCard label="Available" value={String(available)} color="text-green-600" />
-        <StatCard label="Borrowed" value={String(borrowed)} color="text-blue-600" />
-        <StatCard label="Low Stock" value={String(lowStock)} color="text-red-600" />
+        <StatCard
+          label="Total Parts"
+          value={String(analyticsSummary?.totalParts ?? parts.length)}
+        />
+        <StatCard
+          label="Available"
+          value={String(
+            analyticsSummary?.availableParts ??
+            parts.filter((p) => p.status === "Available").length
+          )}
+          color="text-green-600"
+        />
+        <StatCard
+          label="Borrowed"
+          value={String(analyticsSummary?.borrowedParts ?? localBorrowedReservations)}
+          color="text-blue-600"
+        />
+        <StatCard
+          label="Low Stock"
+          value={String(
+            analyticsSummary?.lowStockParts ?? localLowStockAlertCounter
+          )}
+          color="text-red-600"
+        />
         <StatCard
           label="Borrowed Reservations"
-          value={String(borrowedReservations)}
+          value={String(
+            analyticsSummary?.borrowedReservations ?? localBorrowedReservations
+          )}
           color="text-blue-600"
         />
         <StatCard
           label="Reserved Reservations"
-          value={String(reservedReservations)}
+          value={String(
+            analyticsSummary?.reservedReservations ?? localReservedReservations
+          )}
           color="text-yellow-600"
         />
         <StatCard
           label="Total Collaborators"
-          value={String(collaborators.length)}
+          value={String(
+            analyticsSummary?.totalCollaborators ?? collaborators.length
+          )}
         />
         <StatCard
           label="Active Borrowers"
-          value={String(activeBorrowers)}
+          value={String(
+            analyticsSummary?.activeBorrowers ??
+            getActiveBorrowers(collaborators, reservations)
+          )}
           color="text-blue-600"
         />
       </div>
@@ -355,17 +1148,22 @@ function Dashboard({
           <div className="border border-gray-200 rounded p-4">
             <p className="text-gray-500">Most Active Collaborator</p>
             <h4 className="text-lg font-bold">
-              {mostActiveCollaborator?.name || "No collaborator activity"}
+              {mostActiveCollaborator?.collaboratorName ||
+                localMostActiveCollaborator?.name ||
+                "No collaborator activity"}
             </h4>
             <p className="text-sm text-gray-500">
-              {mostActiveCollaborator?.totalReservations || 0} reservations
+              {mostActiveCollaborator?.reservationCount ||
+                localMostActiveCollaborator?.totalReservations ||
+                0}{" "}
+              reservations
             </p>
           </div>
 
           <div className="border border-gray-200 rounded p-4">
             <p className="text-gray-500">Low Stock Alerts</p>
             <h4 className="text-lg font-bold text-red-600">
-              {lowStockAlertCounter}
+              {analyticsSummary?.lowStockParts ?? localLowStockAlertCounter}
             </h4>
             <p className="text-sm text-gray-500">parts need attention</p>
           </div>
@@ -376,116 +1174,75 @@ function Dashboard({
 }
 
 function Analytics({
-  parts,
-  reservations,
-  collaborators,
+  analyticsSummary,
+  isLoadingAnalytics,
+  analyticsError,
 }: {
-  parts: Part[]
-  reservations: Reservation[]
-  collaborators: Collaborator[]
+  analyticsSummary: AnalyticsSummary | null
+  isLoadingAnalytics: boolean
+  analyticsError: string | null
 }) {
-  const availableParts = parts.filter((part) => part.status === "Available").length
-  const borrowedParts = parts.filter((part) => part.status === "Borrowed").length
-  const reservedParts = reservations.filter(
-    (reservation) => reservation.status === "Reserved"
-  ).length
-  const lowStockParts = getLowStockParts(parts)
-  const activeBorrowers = getActiveBorrowers(collaborators, reservations)
-  const borrowedPartRanking = getBorrowedPartRanking(reservations).slice(0, 10)
-  const activeCollaboratorRanking = collaborators
-    .map((collaborator) => ({
-      name: collaborator.name,
-      ...getCollaboratorStats(collaborator, reservations),
-    }))
-    .sort((a, b) => b.totalReservations - a.totalReservations)
-    .slice(0, 10)
+  const inventoryByCategory =
+    analyticsSummary?.inventoryByCategory.map((category) => ({
+      name: category.category,
+      value: category.count,
+    })) || []
+  const divisionAnalytics = analyticsSummary?.reservationsByDivision || []
+  const groupAnalytics = analyticsSummary?.borrowedPartsByGroup || []
 
-  const inventoryByCategory = Object.entries(
-    parts.reduce<Record<string, number>>((categories, part) => {
-      categories[part.category] = (categories[part.category] || 0) + 1
-      return categories
-    }, {})
-  ).map(([name, value]) => ({ name, value }))
+  if (isLoadingAnalytics) {
+    return (
+      <>
+        <h2 className="text-3xl font-bold mb-8">Analytics</h2>
+        <div className="bg-white rounded-lg shadow p-6">Loading analytics...</div>
+      </>
+    )
+  }
 
-  const divisionAnalytics = divisions.map((division) => {
-    const divisionCollaborators = collaborators.filter(
-      (collaborator) => collaborator.division === division
+  if (analyticsError || !analyticsSummary) {
+    return (
+      <>
+        <h2 className="text-3xl font-bold mb-8">Analytics</h2>
+        <div className="bg-red-50 border border-red-200 text-red-700 rounded-lg p-6">
+          Failed to load analytics
+        </div>
+      </>
     )
-    const collaboratorNames = divisionCollaborators.map(
-      (collaborator) => collaborator.name
-    )
-    const divisionReservations = reservations.filter((reservation) =>
-      collaboratorNames.includes(reservation.collaborator)
-    )
-
-    return {
-      division,
-      collaborators: divisionCollaborators.length,
-      activeReservations: divisionReservations.filter(
-        (reservation) => reservation.status !== "Returned"
-      ).length,
-      borrowedParts: divisionReservations.filter(
-        (reservation) => reservation.status === "Borrowed"
-      ).length,
-    }
-  })
-
-  const groupAnalytics = collaboratorGroups.map((group) => {
-    const groupCollaborators = collaborators.filter(
-      (collaborator) => collaborator.group === group
-    )
-    const collaboratorNames = groupCollaborators.map(
-      (collaborator) => collaborator.name
-    )
-    const groupReservations = reservations.filter((reservation) =>
-      collaboratorNames.includes(reservation.collaborator)
-    )
-
-    return {
-      group,
-      collaborators: groupCollaborators.length,
-      activeReservations: groupReservations.filter(
-        (reservation) => reservation.status !== "Returned"
-      ).length,
-      borrowedParts: groupReservations.filter(
-        (reservation) => reservation.status === "Borrowed"
-      ).length,
-    }
-  })
+  }
 
   return (
     <>
       <h2 className="text-3xl font-bold mb-8">Analytics</h2>
 
       <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-6 mb-8">
-        <StatCard label="Total Parts" value={String(parts.length)} />
+        <StatCard label="Total Parts" value={String(analyticsSummary.totalParts)} />
         <StatCard
           label="Available Parts"
-          value={String(availableParts)}
+          value={String(analyticsSummary.availableParts)}
           color="text-green-600"
         />
         <StatCard
           label="Borrowed Parts"
-          value={String(borrowedParts)}
+          value={String(analyticsSummary.borrowedParts)}
           color="text-blue-600"
         />
         <StatCard
           label="Reserved Parts"
-          value={String(reservedParts)}
+          value={String(analyticsSummary.reservedParts)}
           color="text-yellow-600"
         />
         <StatCard
           label="Total Collaborators"
-          value={String(collaborators.length)}
+          value={String(analyticsSummary.totalCollaborators)}
         />
         <StatCard
           label="Active Borrowers"
-          value={String(activeBorrowers)}
+          value={String(analyticsSummary.activeBorrowers)}
           color="text-blue-600"
         />
         <StatCard
           label="Low Stock Parts"
-          value={String(lowStockParts.length)}
+          value={String(analyticsSummary.lowStockParts)}
           color="text-red-600"
         />
       </div>
@@ -519,7 +1276,7 @@ function Analytics({
               <XAxis dataKey="division" tick={{ fontSize: 12 }} />
               <YAxis allowDecimals={false} />
               <Tooltip />
-              <Bar dataKey="activeReservations" fill="#facc15" />
+              <Bar dataKey="reservationCount" fill="#facc15" />
             </BarChart>
           </ResponsiveContainer>
         </ChartCard>
@@ -530,7 +1287,7 @@ function Analytics({
               <XAxis dataKey="group" tick={{ fontSize: 12 }} />
               <YAxis allowDecimals={false} />
               <Tooltip />
-              <Bar dataKey="borrowedParts" fill="#2563eb" />
+              <Bar dataKey="borrowedCount" fill="#2563eb" />
             </BarChart>
           </ResponsiveContainer>
         </ChartCard>
@@ -548,7 +1305,7 @@ function Analytics({
               </tr>
             </thead>
             <tbody>
-              {lowStockParts.map((part) => (
+              {analyticsSummary.lowStockItems.map((part) => (
                 <tr key={part.id} className="border-b hover:bg-gray-50">
                   <td className="py-3 px-2 font-medium">{part.name}</td>
                   <td className="py-3 px-2">{part.category}</td>
@@ -570,7 +1327,7 @@ function Analytics({
               </tr>
             </thead>
             <tbody>
-              {borrowedPartRanking.map((part, index) => (
+              {analyticsSummary.mostBorrowedParts.map((part, index) => (
                 <tr key={part.partName} className="border-b hover:bg-gray-50">
                   <td className="py-3 px-2">{index + 1}</td>
                   <td className="py-3 px-2 font-medium">{part.partName}</td>
@@ -592,14 +1349,19 @@ function Analytics({
               </tr>
             </thead>
             <tbody>
-              {activeCollaboratorRanking.map((collaborator, index) => (
-                <tr key={collaborator.name} className="border-b hover:bg-gray-50">
+              {analyticsSummary.mostActiveCollaborators.map((collaborator, index) => (
+                <tr
+                  key={collaborator.collaboratorName}
+                  className="border-b hover:bg-gray-50"
+                >
                   <td className="py-3 px-2">{index + 1}</td>
-                  <td className="py-3 px-2 font-medium">{collaborator.name}</td>
-                  <td className="py-3 px-2">
-                    {collaborator.totalReservations}
+                  <td className="py-3 px-2 font-medium">
+                    {collaborator.collaboratorName}
                   </td>
-                  <td className="py-3 px-2">{collaborator.borrowedItems}</td>
+                  <td className="py-3 px-2">
+                    {collaborator.reservationCount}
+                  </td>
+                  <td className="py-3 px-2">{collaborator.borrowedCount}</td>
                 </tr>
               ))}
             </tbody>
@@ -658,15 +1420,32 @@ function Analytics({
 
 function Inventory({
   parts,
-  setParts,
+  isLoadingParts,
+  partsError,
+  apiFetch,
+  reloadParts,
+  reloadAnalytics,
+  setPartsError,
+  canManageParts,
+  canRequestParts,
+  reloadRequests,
 }: {
   parts: Part[]
-  setParts: React.Dispatch<React.SetStateAction<Part[]>>
+  isLoadingParts: boolean
+  partsError: string | null
+  apiFetch: ApiFetch
+  reloadParts: () => Promise<void>
+  reloadAnalytics: () => Promise<void>
+  setPartsError: React.Dispatch<React.SetStateAction<string | null>>
+  canManageParts: boolean
+  canRequestParts: boolean
+  reloadRequests: () => Promise<void>
 }) {
   const [search, setSearch] = useState("")
   const [category, setCategory] = useState("All Categories")
   const [isModalOpen, setIsModalOpen] = useState(false)
   const [editingPart, setEditingPart] = useState<Part | null>(null)
+  const [requestingPart, setRequestingPart] = useState<Part | null>(null)
 
   const filteredParts = parts.filter((part) => {
     const matchesSearch =
@@ -679,19 +1458,82 @@ function Inventory({
     return matchesSearch && matchesCategory
   })
 
-  function handleDelete(id: number) {
-    setParts(parts.filter((part) => part.id !== id))
+  async function handleDelete(id: number) {
+    try {
+      setPartsError(null)
+
+      const response = await apiFetch(`${PARTS_API_URL}/${id}`, {
+        method: "DELETE",
+      })
+
+      if (!response.ok) {
+        throw new Error("Failed to delete part")
+      }
+
+      await reloadParts()
+      await reloadAnalytics()
+    } catch {
+      setPartsError("Failed to delete part")
+    }
   }
 
-  function handleSave(part: Part) {
-    if (editingPart) {
-      setParts(parts.map((p) => (p.id === part.id ? part : p)))
-    } else {
-      setParts([...parts, { ...part, id: Date.now() }])
-    }
+  async function handleSave(part: Part) {
+    const { id, ...partPayload } = part
 
-    setIsModalOpen(false)
-    setEditingPart(null)
+    try {
+      setPartsError(null)
+
+      const response = await apiFetch(
+        editingPart ? `${PARTS_API_URL}/${id}` : PARTS_API_URL,
+        {
+          method: editingPart ? "PUT" : "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify(partPayload),
+        }
+      )
+
+      if (!response.ok) {
+        throw new Error(editingPart ? "Failed to update part" : "Failed to create part")
+      }
+
+      await reloadParts()
+      await reloadAnalytics()
+      setIsModalOpen(false)
+      setEditingPart(null)
+    } catch {
+      setPartsError(editingPart ? "Failed to update part" : "Failed to create part")
+    }
+  }
+
+  async function handleRequestPart(input: {
+    partId: number
+    quantity: number
+    requestType: "Reservation" | "Borrow"
+    expectedReturnDate: string
+    reason: string
+  }) {
+    try {
+      setPartsError(null)
+
+      const response = await apiFetch(REQUESTS_API_URL, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(input),
+      })
+
+      if (!response.ok) {
+        throw new Error("Failed to create request")
+      }
+
+      await reloadRequests()
+      setRequestingPart(null)
+    } catch {
+      setPartsError("Failed to submit request")
+    }
   }
 
   return (
@@ -699,15 +1541,29 @@ function Inventory({
       <div className="flex justify-between items-center mb-8">
         <h2 className="text-3xl font-bold">Inventory</h2>
 
-        <button
-          onClick={() => setIsModalOpen(true)}
-          className="bg-yellow-400 text-black font-semibold px-4 py-2 rounded"
-        >
-          + Add Part
-        </button>
+        {canManageParts && (
+          <button
+            onClick={() => setIsModalOpen(true)}
+            className="bg-yellow-400 text-black font-semibold px-4 py-2 rounded"
+          >
+            + Add Part
+          </button>
+        )}
       </div>
 
       <div className="bg-white rounded-lg shadow p-6">
+        {isLoadingParts && (
+          <div className="mb-6 rounded border border-gray-200 bg-gray-50 px-4 py-3 text-gray-600">
+            Loading parts...
+          </div>
+        )}
+
+        {partsError && (
+          <div className="mb-6 rounded border border-red-200 bg-red-50 px-4 py-3 text-red-700">
+            {partsError}
+          </div>
+        )}
+
         <div className="flex gap-4 mb-6">
           <input
             type="text"
@@ -723,11 +1579,9 @@ function Inventory({
             className="border border-gray-300 rounded px-4 py-2"
           >
             <option>All Categories</option>
-            <option>Microcontroller</option>
-            <option>Sensor</option>
-            <option>Development Board</option>
-            <option>PCB</option>
-            <option>Actuator</option>
+            {partCategories.map((categoryName) => (
+              <option key={categoryName}>{categoryName}</option>
+            ))}
           </select>
         </div>
 
@@ -740,7 +1594,9 @@ function Inventory({
               <th className="text-left py-3 px-2">Qty</th>
               <th className="text-left py-3 px-2">Location</th>
               <th className="text-left py-3 px-2">Status</th>
-              <th className="text-left py-3 px-2">Actions</th>
+              {(canManageParts || canRequestParts) && (
+                <th className="text-left py-3 px-2">Actions</th>
+              )}
             </tr>
           </thead>
 
@@ -753,24 +1609,39 @@ function Inventory({
                 <td className="py-3 px-2">{part.quantity}</td>
                 <td className="py-3 px-2">{part.location}</td>
                 <td className="py-3 px-2">{part.status}</td>
-                <td className="py-3 px-2 space-x-2">
-                  <button
-                    onClick={() => {
-                      setEditingPart(part)
-                      setIsModalOpen(true)
-                    }}
-                    className="text-blue-600"
-                  >
-                    Edit
-                  </button>
+                {(canManageParts || canRequestParts) && (
+                  <td className="py-3 px-2 space-x-2">
+                    {canManageParts && (
+                      <>
+                        <button
+                          onClick={() => {
+                            setEditingPart(part)
+                            setIsModalOpen(true)
+                          }}
+                          className="text-blue-600"
+                        >
+                          Edit
+                        </button>
 
-                  <button
-                    onClick={() => handleDelete(part.id)}
-                    className="text-red-600"
-                  >
-                    Delete
-                  </button>
-                </td>
+                        <button
+                          onClick={() => handleDelete(part.id)}
+                          className="text-red-600"
+                        >
+                          Delete
+                        </button>
+                      </>
+                    )}
+
+                    {canRequestParts && part.quantity > 0 && (
+                      <button
+                        onClick={() => setRequestingPart(part)}
+                        className="text-yellow-700 font-semibold"
+                      >
+                        Request
+                      </button>
+                    )}
+                  </td>
+                )}
               </tr>
             ))}
           </tbody>
@@ -787,18 +1658,38 @@ function Inventory({
           onSave={handleSave}
         />
       )}
+
+      {requestingPart && (
+        <PartRequestModal
+          part={requestingPart}
+          onClose={() => setRequestingPart(null)}
+          onSave={handleRequestPart}
+        />
+      )}
     </>
   )
 }
 
 function Collaborators({
   collaborators,
+  isLoadingCollaborators,
+  collaboratorsError,
   reservations,
-  setCollaborators,
+  apiFetch,
+  reloadCollaborators,
+  reloadAnalytics,
+  setCollaboratorsError,
+  canManageCollaborators,
 }: {
   collaborators: Collaborator[]
+  isLoadingCollaborators: boolean
+  collaboratorsError: string | null
   reservations: Reservation[]
-  setCollaborators: React.Dispatch<React.SetStateAction<Collaborator[]>>
+  apiFetch: ApiFetch
+  reloadCollaborators: () => Promise<void>
+  reloadAnalytics: () => Promise<void>
+  setCollaboratorsError: React.Dispatch<React.SetStateAction<string | null>>
+  canManageCollaborators: boolean
 }) {
   const [search, setSearch] = useState("")
   const [division, setDivision] = useState<"All Divisions" | Division>(
@@ -826,33 +1717,61 @@ function Collaborators({
     return matchesSearch && matchesDivision && matchesGroup
   })
 
-  function handleDelete(id: number) {
-    setCollaborators(
-      collaborators.filter((collaborator) => collaborator.id !== id)
-    )
+  async function handleDelete(id: number) {
+    try {
+      setCollaboratorsError(null)
+
+      const response = await apiFetch(`${COLLABORATORS_API_URL}/${id}`, {
+        method: "DELETE",
+      })
+
+      if (!response.ok) {
+        throw new Error("Failed to delete collaborator")
+      }
+
+      await reloadCollaborators()
+      await reloadAnalytics()
+    } catch {
+      setCollaboratorsError("Failed to delete collaborator")
+    }
   }
 
-  function handleSave(collaborator: Collaborator) {
-    if (editingCollaborator) {
-      setCollaborators(
-        collaborators.map((currentCollaborator) =>
-          currentCollaborator.id === collaborator.id
-            ? collaborator
-            : currentCollaborator
-        )
-      )
-    } else {
-      setCollaborators([
-        ...collaborators,
-        {
-          ...collaborator,
-          id: Date.now(),
-        },
-      ])
-    }
+  async function handleSave(collaborator: Collaborator) {
+    const { id, ...collaboratorPayload } = collaborator
 
-    setIsModalOpen(false)
-    setEditingCollaborator(null)
+    try {
+      setCollaboratorsError(null)
+
+      const response = await apiFetch(
+        editingCollaborator ? `${COLLABORATORS_API_URL}/${id}` : COLLABORATORS_API_URL,
+        {
+          method: editingCollaborator ? "PUT" : "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify(collaboratorPayload),
+        }
+      )
+
+      if (!response.ok) {
+        throw new Error(
+          editingCollaborator
+            ? "Failed to update collaborator"
+            : "Failed to create collaborator"
+        )
+      }
+
+      await reloadCollaborators()
+      await reloadAnalytics()
+      setIsModalOpen(false)
+      setEditingCollaborator(null)
+    } catch {
+      setCollaboratorsError(
+        editingCollaborator
+          ? "Failed to update collaborator"
+          : "Failed to create collaborator"
+      )
+    }
   }
 
   return (
@@ -860,15 +1779,29 @@ function Collaborators({
       <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-4 mb-8">
         <h2 className="text-3xl font-bold">Collaborators</h2>
 
-        <button
-          onClick={() => setIsModalOpen(true)}
-          className="bg-yellow-400 text-black font-semibold px-4 py-2 rounded"
-        >
-          + Add Collaborator
-        </button>
+        {canManageCollaborators && (
+          <button
+            onClick={() => setIsModalOpen(true)}
+            className="bg-yellow-400 text-black font-semibold px-4 py-2 rounded"
+          >
+            + Add Collaborator
+          </button>
+        )}
       </div>
 
       <div className="bg-white rounded-lg shadow p-6 overflow-x-auto">
+        {isLoadingCollaborators && (
+          <div className="mb-6 rounded border border-gray-200 bg-gray-50 px-4 py-3 text-gray-600">
+            Loading collaborators...
+          </div>
+        )}
+
+        {collaboratorsError && (
+          <div className="mb-6 rounded border border-red-200 bg-red-50 px-4 py-3 text-red-700">
+            {collaboratorsError}
+          </div>
+        )}
+
         <div className="flex flex-col md:flex-row gap-4 mb-6">
           <input
             type="text"
@@ -915,7 +1848,9 @@ function Collaborators({
               <th className="text-left py-3 px-2">Role</th>
               <th className="text-left py-3 px-2">Active Reservations</th>
               <th className="text-left py-3 px-2">Borrowed Items</th>
-              <th className="text-left py-3 px-2">Actions</th>
+              {canManageCollaborators && (
+                <th className="text-left py-3 px-2">Actions</th>
+              )}
             </tr>
           </thead>
 
@@ -946,24 +1881,26 @@ function Collaborators({
                   <td className="py-3 px-2">{collaborator.role}</td>
                   <td className="py-3 px-2">{activeReservations}</td>
                   <td className="py-3 px-2">{borrowedItems}</td>
-                  <td className="py-3 px-2 space-x-2">
-                    <button
-                      onClick={() => {
-                        setEditingCollaborator(collaborator)
-                        setIsModalOpen(true)
-                      }}
-                      className="text-blue-600"
-                    >
-                      Edit
-                    </button>
+                  {canManageCollaborators && (
+                    <td className="py-3 px-2 space-x-2">
+                      <button
+                        onClick={() => {
+                          setEditingCollaborator(collaborator)
+                          setIsModalOpen(true)
+                        }}
+                        className="text-blue-600"
+                      >
+                        Edit
+                      </button>
 
-                    <button
-                      onClick={() => handleDelete(collaborator.id)}
-                      className="text-red-600"
-                    >
-                      Delete
-                    </button>
-                  </td>
+                      <button
+                        onClick={() => handleDelete(collaborator.id)}
+                        className="text-red-600"
+                      >
+                        Delete
+                      </button>
+                    </td>
+                  )}
                 </tr>
               )
             })}
@@ -971,7 +1908,7 @@ function Collaborators({
             {filteredCollaborators.length === 0 && (
               <tr>
                 <td
-                  colSpan={8}
+                  colSpan={canManageCollaborators ? 8 : 7}
                   className="py-8 text-center text-gray-500"
                 >
                   No collaborators found.
@@ -1093,37 +2030,693 @@ function CollaboratorModal({
   )
 }
 
+function RequestsPage({
+  partRequests,
+  missingItemRequests,
+  isLoadingRequests,
+  requestsError,
+  apiFetch,
+  reloadParts,
+  reloadRequests,
+  reloadAnalytics,
+  setRequestsError,
+  canApproveRequests,
+}: {
+  partRequests: PartRequest[]
+  missingItemRequests: MissingItemRequest[]
+  isLoadingRequests: boolean
+  requestsError: string | null
+  apiFetch: ApiFetch
+  reloadParts: () => Promise<void>
+  reloadRequests: () => Promise<void>
+  reloadAnalytics: () => Promise<void>
+  setRequestsError: React.Dispatch<React.SetStateAction<string | null>>
+  canApproveRequests: boolean
+}) {
+  async function handlePartRequestAction(
+    id: number,
+    action: "approve" | "reject" | "return"
+  ) {
+    const managerComment =
+      window.prompt("Manager comment", "")?.trim() || ""
+
+    try {
+      setRequestsError(null)
+
+      const response = await apiFetch(`${REQUESTS_API_URL}/${id}/${action}`, {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ managerComment }),
+      })
+
+      if (!response.ok) {
+        throw new Error("Failed to update request")
+      }
+
+      await reloadRequests()
+      await reloadParts()
+      await reloadAnalytics()
+    } catch {
+      setRequestsError("Failed to update request")
+    }
+  }
+
+  async function handleMissingItemAction(
+    id: number,
+    action: "approve" | "reject"
+  ) {
+    const managerComment =
+      window.prompt("Manager comment", "")?.trim() || ""
+
+    try {
+      setRequestsError(null)
+
+      const response = await apiFetch(
+        `${MISSING_ITEM_REQUESTS_API_URL}/${id}/${action}`,
+        {
+          method: "PUT",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ managerComment }),
+        }
+      )
+
+      if (!response.ok) {
+        throw new Error("Failed to update missing item request")
+      }
+
+      await reloadRequests()
+    } catch {
+      setRequestsError("Failed to update missing item request")
+    }
+  }
+
+  return (
+    <>
+      <h2 className="text-3xl font-bold mb-8">Requests</h2>
+
+      <div className="bg-white rounded-lg shadow p-6 mb-8 overflow-x-auto">
+        <h3 className="text-xl font-bold mb-4">Part Requests</h3>
+
+        {isLoadingRequests && (
+          <div className="mb-6 rounded border border-gray-200 bg-gray-50 px-4 py-3 text-gray-600">
+            Loading requests...
+          </div>
+        )}
+
+        {requestsError && (
+          <div className="mb-6 rounded border border-red-200 bg-red-50 px-4 py-3 text-red-700">
+            {requestsError}
+          </div>
+        )}
+
+        <table className="w-full min-w-[1080px]">
+          <thead>
+            <tr className="border-b bg-gray-100">
+              <th className="text-left py-3 px-2">Collaborator</th>
+              <th className="text-left py-3 px-2">Part</th>
+              <th className="text-left py-3 px-2">Type</th>
+              <th className="text-left py-3 px-2">Qty</th>
+              <th className="text-left py-3 px-2">Return Date</th>
+              <th className="text-left py-3 px-2">Reason</th>
+              <th className="text-left py-3 px-2">Status</th>
+              <th className="text-left py-3 px-2">Comment</th>
+              {canApproveRequests && (
+                <th className="text-left py-3 px-2">Actions</th>
+              )}
+            </tr>
+          </thead>
+
+          <tbody>
+            {partRequests.map((request) => (
+              <tr key={request.id} className="border-b hover:bg-gray-50">
+                <td className="py-3 px-2 font-medium">
+                  {request.collaborator?.name || "Unknown"}
+                </td>
+                <td className="py-3 px-2">{request.part?.name || "Unknown"}</td>
+                <td className="py-3 px-2">{request.requestType}</td>
+                <td className="py-3 px-2">{request.quantity}</td>
+                <td className="py-3 px-2">{request.expectedReturnDate}</td>
+                <td className="py-3 px-2">{request.reason}</td>
+                <td className="py-3 px-2">
+                  <StatusPill status={request.status} />
+                </td>
+                <td className="py-3 px-2">
+                  {request.managerComment || "-"}
+                </td>
+                {canApproveRequests && (
+                  <td className="py-3 px-2">
+                    <div className="flex flex-wrap gap-2">
+                      {request.status === "Pending" && (
+                        <>
+                          <button
+                            onClick={() =>
+                              handlePartRequestAction(request.id, "approve")
+                            }
+                            className="text-green-600 font-semibold"
+                          >
+                            Approve
+                          </button>
+                          <button
+                            onClick={() =>
+                              handlePartRequestAction(request.id, "reject")
+                            }
+                            className="text-red-600 font-semibold"
+                          >
+                            Reject
+                          </button>
+                        </>
+                      )}
+
+                      {(request.status === "Reserved" ||
+                        request.status === "Borrowed") && (
+                          <button
+                            onClick={() =>
+                              handlePartRequestAction(request.id, "return")
+                            }
+                            className="text-blue-600 font-semibold"
+                          >
+                            Mark Returned
+                          </button>
+                        )}
+                    </div>
+                  </td>
+                )}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      <div className="bg-white rounded-lg shadow p-6 overflow-x-auto">
+        <h3 className="text-xl font-bold mb-4">Missing Item Requests</h3>
+
+        <table className="w-full min-w-[1080px]">
+          <thead>
+            <tr className="border-b bg-gray-100">
+              <th className="text-left py-3 px-2">Collaborator</th>
+              <th className="text-left py-3 px-2">Item</th>
+              <th className="text-left py-3 px-2">Category</th>
+              <th className="text-left py-3 px-2">Manufacturer</th>
+              <th className="text-left py-3 px-2">Reference</th>
+              <th className="text-left py-3 px-2">Qty</th>
+              <th className="text-left py-3 px-2">Needed Date</th>
+              <th className="text-left py-3 px-2">Status</th>
+              <th className="text-left py-3 px-2">Comment</th>
+              {canApproveRequests && (
+                <th className="text-left py-3 px-2">Actions</th>
+              )}
+            </tr>
+          </thead>
+
+          <tbody>
+            {missingItemRequests.map((request) => (
+              <tr key={request.id} className="border-b hover:bg-gray-50">
+                <td className="py-3 px-2 font-medium">
+                  {request.collaborator?.name || "Unknown"}
+                </td>
+                <td className="py-3 px-2">{request.itemName}</td>
+                <td className="py-3 px-2">{request.category}</td>
+                <td className="py-3 px-2">{request.manufacturer || "-"}</td>
+                <td className="py-3 px-2">{request.reference || "-"}</td>
+                <td className="py-3 px-2">{request.quantityNeeded}</td>
+                <td className="py-3 px-2">{request.neededDate}</td>
+                <td className="py-3 px-2">
+                  <StatusPill status={request.status} />
+                </td>
+                <td className="py-3 px-2">
+                  {request.managerComment || "-"}
+                </td>
+                {canApproveRequests && (
+                  <td className="py-3 px-2 space-x-2">
+                    {request.status === "Pending" && (
+                      <>
+                        <button
+                          onClick={() =>
+                            handleMissingItemAction(request.id, "approve")
+                          }
+                          className="text-green-600 font-semibold"
+                        >
+                          Approve
+                        </button>
+                        <button
+                          onClick={() =>
+                            handleMissingItemAction(request.id, "reject")
+                          }
+                          className="text-red-600 font-semibold"
+                        >
+                          Reject
+                        </button>
+                      </>
+                    )}
+                  </td>
+                )}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </>
+  )
+}
+
+function MyRequestsPage({
+  partRequests,
+  missingItemRequests,
+  isLoadingRequests,
+  requestsError,
+  apiFetch,
+  reloadRequests,
+  setRequestsError,
+}: {
+  partRequests: PartRequest[]
+  missingItemRequests: MissingItemRequest[]
+  isLoadingRequests: boolean
+  requestsError: string | null
+  apiFetch: ApiFetch
+  reloadRequests: () => Promise<void>
+  setRequestsError: React.Dispatch<React.SetStateAction<string | null>>
+}) {
+  const [isMissingItemModalOpen, setIsMissingItemModalOpen] = useState(false)
+
+  async function handleMissingItemRequest(input: {
+    itemName: string
+    category: string
+    manufacturer: string
+    reference: string
+    quantityNeeded: number
+    reason: string
+    neededDate: string
+  }) {
+    try {
+      setRequestsError(null)
+
+      const response = await apiFetch(MISSING_ITEM_REQUESTS_API_URL, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(input),
+      })
+
+      if (!response.ok) {
+        throw new Error("Failed to create missing item request")
+      }
+
+      await reloadRequests()
+      setIsMissingItemModalOpen(false)
+    } catch {
+      setRequestsError("Failed to submit missing item request")
+    }
+  }
+
+  return (
+    <>
+      <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-4 mb-8">
+        <h2 className="text-3xl font-bold">My Requests</h2>
+
+        <button
+          onClick={() => setIsMissingItemModalOpen(true)}
+          className="bg-yellow-400 text-black font-semibold px-4 py-2 rounded"
+        >
+          Request Missing Item
+        </button>
+      </div>
+
+      <div className="bg-white rounded-lg shadow p-6 mb-8 overflow-x-auto">
+        {isLoadingRequests && (
+          <div className="mb-6 rounded border border-gray-200 bg-gray-50 px-4 py-3 text-gray-600">
+            Loading requests...
+          </div>
+        )}
+
+        {requestsError && (
+          <div className="mb-6 rounded border border-red-200 bg-red-50 px-4 py-3 text-red-700">
+            {requestsError}
+          </div>
+        )}
+
+        <h3 className="text-xl font-bold mb-4">Part Requests</h3>
+        <table className="w-full min-w-[860px]">
+          <thead>
+            <tr className="border-b bg-gray-100">
+              <th className="text-left py-3 px-2">Part</th>
+              <th className="text-left py-3 px-2">Type</th>
+              <th className="text-left py-3 px-2">Qty</th>
+              <th className="text-left py-3 px-2">Return Date</th>
+              <th className="text-left py-3 px-2">Status</th>
+              <th className="text-left py-3 px-2">Manager Comment</th>
+            </tr>
+          </thead>
+          <tbody>
+            {partRequests.map((request) => (
+              <tr key={request.id} className="border-b hover:bg-gray-50">
+                <td className="py-3 px-2 font-medium">
+                  {request.part?.name || "Unknown"}
+                </td>
+                <td className="py-3 px-2">{request.requestType}</td>
+                <td className="py-3 px-2">{request.quantity}</td>
+                <td className="py-3 px-2">{request.expectedReturnDate}</td>
+                <td className="py-3 px-2">
+                  <StatusPill status={request.status} />
+                </td>
+                <td className="py-3 px-2">
+                  {request.managerComment || "-"}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      <div className="bg-white rounded-lg shadow p-6 overflow-x-auto">
+        <h3 className="text-xl font-bold mb-4">Missing Item Requests</h3>
+        <table className="w-full min-w-[860px]">
+          <thead>
+            <tr className="border-b bg-gray-100">
+              <th className="text-left py-3 px-2">Item</th>
+              <th className="text-left py-3 px-2">Category</th>
+              <th className="text-left py-3 px-2">Qty</th>
+              <th className="text-left py-3 px-2">Needed Date</th>
+              <th className="text-left py-3 px-2">Status</th>
+              <th className="text-left py-3 px-2">Manager Comment</th>
+            </tr>
+          </thead>
+          <tbody>
+            {missingItemRequests.map((request) => (
+              <tr key={request.id} className="border-b hover:bg-gray-50">
+                <td className="py-3 px-2 font-medium">{request.itemName}</td>
+                <td className="py-3 px-2">{request.category}</td>
+                <td className="py-3 px-2">{request.quantityNeeded}</td>
+                <td className="py-3 px-2">{request.neededDate}</td>
+                <td className="py-3 px-2">
+                  <StatusPill status={request.status} />
+                </td>
+                <td className="py-3 px-2">
+                  {request.managerComment || "-"}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      {isMissingItemModalOpen && (
+        <MissingItemRequestModal
+          onClose={() => setIsMissingItemModalOpen(false)}
+          onSave={handleMissingItemRequest}
+        />
+      )}
+    </>
+  )
+}
+
+function SettingsPage({
+  users,
+  collaborators,
+  usersError,
+  apiFetch,
+  reloadUsers,
+  setUsersError,
+}: {
+  users: AuthUser[]
+  collaborators: Collaborator[]
+  usersError: string | null
+  apiFetch: ApiFetch
+  reloadUsers: () => Promise<void>
+  setUsersError: React.Dispatch<React.SetStateAction<string | null>>
+}) {
+  const [selectedUserId, setSelectedUserId] = useState(users[0]?.id || 0)
+  const selectedUser = users.find((user) => user.id === selectedUserId) || users[0]
+  const [role, setRole] = useState<UserRole>(selectedUser?.role || "Viewer")
+  const [managedDivision, setManagedDivision] = useState<Division>(
+    (selectedUser?.managedDivision as Division) || "Division 1"
+  )
+
+  useEffect(() => {
+    if (!selectedUser) {
+      return
+    }
+
+    setRole(selectedUser.role)
+    setManagedDivision((selectedUser.managedDivision as Division) || "Division 1")
+  }, [selectedUserId, users.length])
+
+  async function handleSaveAssignment() {
+    if (!selectedUser) {
+      return
+    }
+
+    try {
+      setUsersError(null)
+
+      const response = await apiFetch(
+        `${USERS_API_URL}/${selectedUser.id}/assignment`,
+        {
+          method: "PUT",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            role,
+            managedDivision:
+              role === "Inventory Manager" ? managedDivision : null,
+          }),
+        }
+      )
+
+      if (!response.ok) {
+        throw new Error("Failed to update user assignment")
+      }
+
+      await reloadUsers()
+    } catch {
+      setUsersError("Failed to update user assignment")
+    }
+  }
+
+  return (
+    <>
+      <h2 className="text-3xl font-bold mb-8">Settings</h2>
+
+      <div className="bg-white rounded-lg shadow p-6 mb-8">
+        <h3 className="text-xl font-bold mb-4">Manager Assignment</h3>
+
+        {usersError && (
+          <div className="mb-6 rounded border border-red-200 bg-red-50 px-4 py-3 text-red-700">
+            {usersError}
+          </div>
+        )}
+
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+          <select
+            value={selectedUser?.id || 0}
+            onChange={(event) => setSelectedUserId(Number(event.target.value))}
+            className="border border-gray-300 rounded px-4 py-2"
+          >
+            {users.map((user) => (
+              <option key={user.id} value={user.id}>
+                {user.name} - {user.email}
+              </option>
+            ))}
+          </select>
+
+          <select
+            value={role}
+            onChange={(event) => setRole(event.target.value as UserRole)}
+            className="border border-gray-300 rounded px-4 py-2"
+          >
+            <option>Admin</option>
+            <option>Inventory Manager</option>
+            <option>Collaborator</option>
+            <option>Viewer</option>
+          </select>
+
+          <select
+            value={managedDivision}
+            onChange={(event) =>
+              setManagedDivision(event.target.value as Division)
+            }
+            className="border border-gray-300 rounded px-4 py-2"
+            disabled={role !== "Inventory Manager"}
+          >
+            {divisions
+              .filter((division) => division !== "Admin")
+              .map((division) => (
+                <option key={division}>{division}</option>
+              ))}
+          </select>
+
+          <button
+            onClick={handleSaveAssignment}
+            disabled={!selectedUser}
+            className="bg-yellow-400 text-black font-semibold px-4 py-2 rounded disabled:opacity-60"
+          >
+            Save Assignment
+          </button>
+        </div>
+      </div>
+
+      <div className="bg-white rounded-lg shadow p-6 overflow-x-auto">
+        <h3 className="text-xl font-bold mb-4">Users and Collaborators</h3>
+
+        <table className="w-full min-w-[900px]">
+          <thead>
+            <tr className="border-b bg-gray-100">
+              <th className="text-left py-3 px-2">Name</th>
+              <th className="text-left py-3 px-2">Email</th>
+              <th className="text-left py-3 px-2">Role</th>
+              <th className="text-left py-3 px-2">Division</th>
+              <th className="text-left py-3 px-2">Managed Division</th>
+            </tr>
+          </thead>
+          <tbody>
+            {users.map((user) => (
+              <tr key={user.id} className="border-b hover:bg-gray-50">
+                <td className="py-3 px-2 font-medium">{user.name}</td>
+                <td className="py-3 px-2">{user.email}</td>
+                <td className="py-3 px-2">{user.role}</td>
+                <td className="py-3 px-2">{user.division}</td>
+                <td className="py-3 px-2">{user.managedDivision || "-"}</td>
+              </tr>
+            ))}
+            {collaborators
+              .filter(
+                (collaborator) =>
+                  !users.some((user) => user.email === collaborator.email)
+              )
+              .map((collaborator) => (
+                <tr key={`collaborator-${collaborator.id}`} className="border-b hover:bg-gray-50">
+                  <td className="py-3 px-2 font-medium">{collaborator.name}</td>
+                  <td className="py-3 px-2">{collaborator.email}</td>
+                  <td className="py-3 px-2">{collaborator.role}</td>
+                  <td className="py-3 px-2">{collaborator.division}</td>
+                  <td className="py-3 px-2">-</td>
+                </tr>
+              ))}
+          </tbody>
+        </table>
+      </div>
+    </>
+  )
+}
+
 function Reservations({
   parts,
+  collaborators,
   reservations,
-  setReservations,
+  isLoadingReservations,
+  reservationsError,
+  apiFetch,
+  reloadParts,
+  reloadReservations,
+  reloadAnalytics,
+  setReservationsError,
+  canCreateReservations,
+  canManageReservations,
 }: {
   parts: Part[]
+  collaborators: Collaborator[]
   reservations: Reservation[]
-  setReservations: React.Dispatch<React.SetStateAction<Reservation[]>>
+  isLoadingReservations: boolean
+  reservationsError: string | null
+  apiFetch: ApiFetch
+  reloadParts: () => Promise<void>
+  reloadReservations: () => Promise<void>
+  reloadAnalytics: () => Promise<void>
+  setReservationsError: React.Dispatch<React.SetStateAction<string | null>>
+  canCreateReservations: boolean
+  canManageReservations: boolean
 }) {
   const [isModalOpen, setIsModalOpen] = useState(false)
 
-  function handleCreate(reservation: Reservation) {
-    setReservations([...reservations, { ...reservation, id: Date.now() }])
-    setIsModalOpen(false)
+  async function handleCreate(reservation: Reservation) {
+    const { id, collaborator, partName, ...reservationPayload } = reservation
+
+    try {
+      setReservationsError(null)
+
+      const response = await apiFetch(RESERVATIONS_API_URL, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(reservationPayload),
+      })
+
+      if (!response.ok) {
+        throw new Error("Failed to create reservation")
+      }
+
+      await reloadReservations()
+      await reloadParts()
+      await reloadAnalytics()
+      setIsModalOpen(false)
+    } catch {
+      setReservationsError("Failed to create reservation")
+    }
   }
 
-  function handleDelete(id: number) {
-    setReservations(
-      reservations.filter((reservation) => reservation.id !== id)
-    )
+  async function handleDelete(id: number) {
+    try {
+      setReservationsError(null)
+
+      const response = await apiFetch(`${RESERVATIONS_API_URL}/${id}`, {
+        method: "DELETE",
+      })
+
+      if (!response.ok) {
+        throw new Error("Failed to delete reservation")
+      }
+
+      await reloadReservations()
+      await reloadParts()
+      await reloadAnalytics()
+    } catch {
+      setReservationsError("Failed to delete reservation")
+    }
   }
 
-  function updateStatus(
-    id: number,
-    status: Reservation["status"]
-  ) {
-    setReservations(
-      reservations.map((reservation) =>
-        reservation.id === id ? { ...reservation, status } : reservation
-      )
-    )
+  async function markBorrowed(id: number) {
+    try {
+      setReservationsError(null)
+
+      const response = await apiFetch(`${RESERVATIONS_API_URL}/${id}/mark-borrowed`, {
+        method: "PUT",
+      })
+
+      if (!response.ok) {
+        throw new Error("Failed to mark reservation as borrowed")
+      }
+
+      await reloadReservations()
+      await reloadAnalytics()
+    } catch {
+      setReservationsError("Failed to mark reservation as borrowed")
+    }
+  }
+
+  async function returnReservation(id: number) {
+    try {
+      setReservationsError(null)
+
+      const response = await apiFetch(`${RESERVATIONS_API_URL}/${id}/return`, {
+        method: "PUT",
+      })
+
+      if (!response.ok) {
+        throw new Error("Failed to return reservation")
+      }
+
+      await reloadReservations()
+      await reloadParts()
+      await reloadAnalytics()
+    } catch {
+      setReservationsError("Failed to return reservation")
+    }
   }
 
   return (
@@ -1131,15 +2724,29 @@ function Reservations({
       <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-4 mb-8">
         <h2 className="text-3xl font-bold">Reservations</h2>
 
-        <button
-          onClick={() => setIsModalOpen(true)}
-          className="bg-yellow-400 text-black font-semibold px-4 py-2 rounded"
-        >
-          + New Reservation
-        </button>
+        {canCreateReservations && (
+          <button
+            onClick={() => setIsModalOpen(true)}
+            className="bg-yellow-400 text-black font-semibold px-4 py-2 rounded"
+          >
+            + New Reservation
+          </button>
+        )}
       </div>
 
       <div className="bg-white rounded-lg shadow p-6 overflow-x-auto">
+        {isLoadingReservations && (
+          <div className="mb-6 rounded border border-gray-200 bg-gray-50 px-4 py-3 text-gray-600">
+            Loading reservations...
+          </div>
+        )}
+
+        {reservationsError && (
+          <div className="mb-6 rounded border border-red-200 bg-red-50 px-4 py-3 text-red-700">
+            {reservationsError}
+          </div>
+        )}
+
         <table className="w-full min-w-[820px]">
           <thead>
             <tr className="border-b bg-gray-100">
@@ -1148,7 +2755,9 @@ function Reservations({
               <th className="text-left py-3 px-2">Qty</th>
               <th className="text-left py-3 px-2">Expected Return</th>
               <th className="text-left py-3 px-2">Status</th>
-              <th className="text-left py-3 px-2">Actions</th>
+              {canManageReservations && (
+                <th className="text-left py-3 px-2">Actions</th>
+              )}
             </tr>
           </thead>
 
@@ -1175,45 +2784,47 @@ function Reservations({
                     {reservation.status}
                   </span>
                 </td>
-                <td className="py-3 px-2">
-                  <div className="flex flex-wrap gap-2">
-                    {reservation.status === "Reserved" && (
-                      <button
-                        onClick={() =>
-                          updateStatus(reservation.id, "Borrowed")
-                        }
-                        className="text-blue-600"
-                      >
-                        Mark Borrowed
-                      </button>
-                    )}
+                {canManageReservations && (
+                  <td className="py-3 px-2">
+                    <div className="flex flex-wrap gap-2">
+                      {canManageReservations &&
+                        reservation.status === "Reserved" && (
+                          <button
+                            onClick={() => markBorrowed(reservation.id)}
+                            className="text-blue-600"
+                          >
+                            Mark Borrowed
+                          </button>
+                        )}
 
-                    {reservation.status === "Borrowed" && (
-                      <button
-                        onClick={() =>
-                          updateStatus(reservation.id, "Returned")
-                        }
-                        className="text-green-600"
-                      >
-                        Return
-                      </button>
-                    )}
+                      {canManageReservations &&
+                        reservation.status === "Borrowed" && (
+                          <button
+                            onClick={() => returnReservation(reservation.id)}
+                            className="text-green-600"
+                          >
+                            Return
+                          </button>
+                        )}
 
-                    <button
-                      onClick={() => handleDelete(reservation.id)}
-                      className="text-red-600"
-                    >
-                      Delete
-                    </button>
-                  </div>
-                </td>
+                      {canManageReservations && (
+                        <button
+                          onClick={() => handleDelete(reservation.id)}
+                          className="text-red-600"
+                        >
+                          Delete
+                        </button>
+                      )}
+                    </div>
+                  </td>
+                )}
               </tr>
             ))}
 
             {reservations.length === 0 && (
               <tr>
                 <td
-                  colSpan={6}
+                  colSpan={canManageReservations ? 6 : 5}
                   className="py-8 text-center text-gray-500"
                 >
                   No reservations yet.
@@ -1227,6 +2838,7 @@ function Reservations({
       {isModalOpen && (
         <ReservationModal
           parts={parts}
+          collaborators={collaborators}
           onClose={() => setIsModalOpen(false)}
           onSave={handleCreate}
         />
@@ -1237,16 +2849,20 @@ function Reservations({
 
 function ReservationModal({
   parts,
+  collaborators,
   onClose,
   onSave,
 }: {
   parts: Part[]
+  collaborators: Collaborator[]
   onClose: () => void
   onSave: (reservation: Reservation) => void
 }) {
   const [form, setForm] = useState<Reservation>({
     id: Date.now(),
-    collaborator: "",
+    collaboratorId: collaborators[0]?.id || 0,
+    partId: parts[0]?.id || 0,
+    collaborator: collaborators[0]?.name || "",
     partName: parts[0]?.name || "",
     quantity: 1,
     expectedReturnDate: "",
@@ -1266,21 +2882,46 @@ function ReservationModal({
         <h3 className="text-2xl font-bold mb-6">New Reservation</h3>
 
         <div className="space-y-4">
-          <input
-            placeholder="Collaborator name"
-            value={form.collaborator}
-            onChange={(e) => updateField("collaborator", e.target.value)}
+          <select
+            value={form.collaboratorId}
+            onChange={(e) => {
+              const collaboratorId = Number(e.target.value)
+              const collaborator = collaborators.find(
+                (currentCollaborator) => currentCollaborator.id === collaboratorId
+              )
+
+              setForm({
+                ...form,
+                collaboratorId,
+                collaborator: collaborator?.name || "",
+              })
+            }}
             className="w-full border rounded px-4 py-2"
-          />
+          >
+            {collaborators.map((collaborator) => (
+              <option key={collaborator.id} value={collaborator.id}>
+                {collaborator.name}
+              </option>
+            ))}
+          </select>
 
           <select
-            value={form.partName}
-            onChange={(e) => updateField("partName", e.target.value)}
+            value={form.partId}
+            onChange={(e) => {
+              const partId = Number(e.target.value)
+              const part = parts.find((currentPart) => currentPart.id === partId)
+
+              setForm({
+                ...form,
+                partId,
+                partName: part?.name || "",
+              })
+            }}
             className="w-full border rounded px-4 py-2"
           >
             {parts.map((part) => (
-              <option key={part.id} value={part.name}>
-                {part.name}
+              <option key={part.id} value={part.id}>
+                {part.name} ({part.quantity} available)
               </option>
             ))}
           </select>
@@ -1326,13 +2967,248 @@ function ReservationModal({
           <button
             onClick={() => onSave(form)}
             className="px-4 py-2 bg-yellow-400 text-black font-semibold rounded"
-            disabled={!form.collaborator || !form.partName}
+            disabled={!form.collaboratorId || !form.partId}
           >
             Save
           </button>
         </div>
       </div>
     </div>
+  )
+}
+
+function PartRequestModal({
+  part,
+  onClose,
+  onSave,
+}: {
+  part: Part
+  onClose: () => void
+  onSave: (request: {
+    partId: number
+    quantity: number
+    requestType: "Reservation" | "Borrow"
+    expectedReturnDate: string
+    reason: string
+  }) => void
+}) {
+  const [form, setForm] = useState({
+    partId: part.id,
+    quantity: 1,
+    requestType: "Reservation" as "Reservation" | "Borrow",
+    expectedReturnDate: "",
+    reason: "",
+  })
+
+  function updateField(field: keyof typeof form, value: string | number) {
+    setForm({ ...form, [field]: value })
+  }
+
+  return (
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4">
+      <div className="bg-white rounded-lg shadow-lg p-6 w-full max-w-[500px]">
+        <h3 className="text-2xl font-bold mb-2">Request Part</h3>
+        <p className="text-gray-600 mb-6">
+          {part.name} - {part.quantity} available
+        </p>
+
+        <div className="space-y-4">
+          <input
+            value={part.name}
+            className="w-full border rounded px-4 py-2 bg-gray-100"
+            disabled
+          />
+
+          <input
+            type="number"
+            min={1}
+            max={part.quantity}
+            value={form.quantity}
+            onChange={(e) => updateField("quantity", Number(e.target.value))}
+            className="w-full border rounded px-4 py-2"
+          />
+
+          <select
+            value={form.requestType}
+            onChange={(e) =>
+              updateField(
+                "requestType",
+                e.target.value as "Reservation" | "Borrow"
+              )
+            }
+            className="w-full border rounded px-4 py-2"
+          >
+            <option>Reservation</option>
+            <option>Borrow</option>
+          </select>
+
+          <input
+            type="date"
+            value={form.expectedReturnDate}
+            onChange={(e) => updateField("expectedReturnDate", e.target.value)}
+            className="w-full border rounded px-4 py-2"
+          />
+
+          <textarea
+            placeholder="Reason / description"
+            value={form.reason}
+            onChange={(e) => updateField("reason", e.target.value)}
+            className="w-full border rounded px-4 py-2 min-h-28"
+          />
+        </div>
+
+        <div className="flex justify-end gap-3 mt-6">
+          <button onClick={onClose} className="px-4 py-2 border rounded">
+            Cancel
+          </button>
+
+          <button
+            onClick={() => onSave(form)}
+            className="px-4 py-2 bg-yellow-400 text-black font-semibold rounded"
+            disabled={
+              form.quantity <= 0 ||
+              form.quantity > part.quantity ||
+              !form.expectedReturnDate ||
+              !form.reason
+            }
+          >
+            Submit Request
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function MissingItemRequestModal({
+  onClose,
+  onSave,
+}: {
+  onClose: () => void
+  onSave: (request: {
+    itemName: string
+    category: string
+    manufacturer: string
+    reference: string
+    quantityNeeded: number
+    reason: string
+    neededDate: string
+  }) => void
+}) {
+  const [form, setForm] = useState({
+    itemName: "",
+    category: partCategories[0],
+    manufacturer: "",
+    reference: "",
+    quantityNeeded: 1,
+    reason: "",
+    neededDate: "",
+  })
+
+  function updateField(field: keyof typeof form, value: string | number) {
+    setForm({ ...form, [field]: value })
+  }
+
+  return (
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4">
+      <div className="bg-white rounded-lg shadow-lg p-6 w-full max-w-[540px]">
+        <h3 className="text-2xl font-bold mb-6">Request Missing Item</h3>
+
+        <div className="space-y-4">
+          <input
+            placeholder="Item name"
+            value={form.itemName}
+            onChange={(e) => updateField("itemName", e.target.value)}
+            className="w-full border rounded px-4 py-2"
+          />
+
+          <select
+            value={form.category}
+            onChange={(e) => updateField("category", e.target.value)}
+            className="w-full border rounded px-4 py-2"
+          >
+            {partCategories.map((categoryName) => (
+              <option key={categoryName}>{categoryName}</option>
+            ))}
+          </select>
+
+          <input
+            placeholder="Manufacturer (optional)"
+            value={form.manufacturer}
+            onChange={(e) => updateField("manufacturer", e.target.value)}
+            className="w-full border rounded px-4 py-2"
+          />
+
+          <input
+            placeholder="Reference (optional)"
+            value={form.reference}
+            onChange={(e) => updateField("reference", e.target.value)}
+            className="w-full border rounded px-4 py-2"
+          />
+
+          <input
+            type="number"
+            min={1}
+            value={form.quantityNeeded}
+            onChange={(e) =>
+              updateField("quantityNeeded", Number(e.target.value))
+            }
+            className="w-full border rounded px-4 py-2"
+          />
+
+          <input
+            type="date"
+            value={form.neededDate}
+            onChange={(e) => updateField("neededDate", e.target.value)}
+            className="w-full border rounded px-4 py-2"
+          />
+
+          <textarea
+            placeholder="Reason / description"
+            value={form.reason}
+            onChange={(e) => updateField("reason", e.target.value)}
+            className="w-full border rounded px-4 py-2 min-h-28"
+          />
+        </div>
+
+        <div className="flex justify-end gap-3 mt-6">
+          <button onClick={onClose} className="px-4 py-2 border rounded">
+            Cancel
+          </button>
+
+          <button
+            onClick={() => onSave(form)}
+            className="px-4 py-2 bg-yellow-400 text-black font-semibold rounded"
+            disabled={
+              !form.itemName ||
+              !form.category ||
+              form.quantityNeeded <= 0 ||
+              !form.neededDate ||
+              !form.reason
+            }
+          >
+            Submit Request
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function StatusPill({ status }: { status: RequestStatus }) {
+  const classes =
+    status === "Pending"
+      ? "bg-yellow-100 text-yellow-800"
+      : status === "Rejected" || status === "Cancelled"
+        ? "bg-red-100 text-red-800"
+        : status === "Returned" || status === "Approved"
+          ? "bg-green-100 text-green-800"
+          : "bg-blue-100 text-blue-800"
+
+  return (
+    <span className={`inline-flex rounded-full px-3 py-1 text-sm font-semibold ${classes}`}>
+      {status}
+    </span>
   )
 }
 
@@ -1349,7 +3225,7 @@ function PartModal({
     part || {
       id: Date.now(),
       name: "",
-      category: "Microcontroller",
+      category: partCategories[0],
       reference: "",
       quantity: 0,
       location: "",
@@ -1381,11 +3257,9 @@ function PartModal({
             onChange={(e) => updateField("category", e.target.value)}
             className="w-full border rounded px-4 py-2"
           >
-            <option>Microcontroller</option>
-            <option>Sensor</option>
-            <option>Development Board</option>
-            <option>PCB</option>
-            <option>Actuator</option>
+            {partCategories.map((categoryName) => (
+              <option key={categoryName}>{categoryName}</option>
+            ))}
           </select>
 
           <input

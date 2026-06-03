@@ -8,7 +8,7 @@ import { InjectRepository } from "@nestjs/typeorm"
 import { Repository } from "typeorm"
 import { Part } from "./part.entity"
 
-type PartInput = Omit<Part, "id" | "createdAt" | "updatedAt">
+type PartInput = Omit<Part, "id" | "createdAt" | "updatedAt" | "reservations">
 
 @Injectable()
 export class PartsService implements OnModuleInit {

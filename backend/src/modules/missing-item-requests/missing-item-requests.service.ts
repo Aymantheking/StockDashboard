@@ -17,6 +17,7 @@ import { UserRole } from "../users/user.entity"
 import { MissingItemRequest } from "./missing-item-request.entity"
 
 type CreateMissingItemRequestInput = {
+  partId?: number
   itemName: string
   category: string
   manufacturer?: string
@@ -63,6 +64,7 @@ export class MissingItemRequestsService {
     const collaborator = await this.findOrCreateCollaboratorForUser(user)
     const request = this.missingItemRequestsRepository.create({
       collaboratorId: collaborator.id,
+      partId: input.partId || null,
       itemName: input.itemName.trim(),
       category: input.category,
       manufacturer: input.manufacturer?.trim() || "",
@@ -162,6 +164,18 @@ export class MissingItemRequestsService {
     if (!input.neededDate) {
       throw new BadRequestException("neededDate is required")
     }
+
+    if (this.isPastDate(input.neededDate)) {
+      throw new BadRequestException("Date cannot be in the past")
+    }
+  }
+
+  private isPastDate(value?: string) {
+    if (!value) {
+      return false
+    }
+
+    return value < new Date().toISOString().slice(0, 10)
   }
 
   private async findOrCreateCollaboratorForUser(user: AuthenticatedUser) {

@@ -19,16 +19,40 @@ export class Part {
   @Column()
   category: string
 
+  @Column({ default: "" })
+  manufacturer: string
+
   @Column()
   reference: string
 
-  @Column()
+  @Column({ default: 0 })
+  totalQuantity: number
+
+  @Column({ default: 0 })
+  availableQuantity: number
+
+  @Column({ default: 0 })
+  reservedQuantity: number
+
+  @Column({ default: 0 })
+  borrowedQuantity: number
+
+  @Column({ default: 0 })
+  damagedQuantity: number
+
+  @Column({ default: 0 })
   quantity: number
 
   @Column()
   location: string
 
-  @Column()
+  @Column({ default: "", type: "text" })
+  description: string
+
+  @Column({ default: "", type: "text" })
+  stockAllocationNote: string
+
+  @Column({ default: "" })
   status: string
 
   @OneToMany(() => Reservation, (reservation) => reservation.part)

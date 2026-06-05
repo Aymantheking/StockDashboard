@@ -13,6 +13,7 @@ import {
   CollaboratorGroup,
   Division,
 } from "./collaborator.entity"
+import { RatingHistory } from "./rating-history.entity"
 
 type CollaboratorInput = Omit<
   Collaborator,
@@ -23,7 +24,9 @@ type CollaboratorInput = Omit<
 export class CollaboratorsService implements OnModuleInit {
   constructor(
     @InjectRepository(Collaborator)
-    private readonly collaboratorsRepository: Repository<Collaborator>
+    private readonly collaboratorsRepository: Repository<Collaborator>,
+    @InjectRepository(RatingHistory)
+    private readonly ratingHistoryRepository: Repository<RatingHistory>
   ) {}
 
   async onModuleInit() {
@@ -114,6 +117,39 @@ export class CollaboratorsService implements OnModuleInit {
     const collaborator = await this.findOne(id)
     await this.collaboratorsRepository.remove(collaborator)
     return { deleted: true }
+  }
+
+  getRatingHistory(collaboratorId: number) {
+    return this.ratingHistoryRepository.find({
+      where: { collaboratorId },
+      order: { createdAt: "DESC" },
+    })
+  }
+
+  async adjustRating(
+    collaboratorId: number,
+    newRating: number,
+    reason: string,
+    changedBy: string
+  ) {
+    if (newRating < 1 || newRating > 5) {
+      throw new BadRequestException("rating must be between 1 and 5")
+    }
+
+    const collaborator = await this.findOne(collaboratorId)
+    const previousRating = collaborator.rating || 5
+    collaborator.rating = Math.max(1, Math.min(5, newRating))
+    await this.collaboratorsRepository.save(collaborator)
+
+    await this.ratingHistoryRepository.save({
+      collaboratorId,
+      previousRating,
+      newRating: collaborator.rating,
+      reason,
+      changedBy,
+    })
+
+    return collaborator
   }
 
   private validateCollaboratorInput(input: Partial<CollaboratorInput>) {

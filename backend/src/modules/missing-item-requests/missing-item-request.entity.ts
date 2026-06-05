@@ -18,6 +18,9 @@ export class MissingItemRequest {
   @Column()
   collaboratorId: number
 
+  @Column({ nullable: true })
+  partId: number | null
+
   @Column()
   itemName: string
 

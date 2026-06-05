@@ -46,7 +46,7 @@ export class ReservationsService implements OnModuleInit {
       where: { email: "sara.m@bertrandt.com" },
     })
 
-    if (raspberryPi && ahmed && raspberryPi.quantity >= 1) {
+    if (raspberryPi && ahmed && raspberryPi.availableQuantity >= 1) {
       await this.create({
         collaboratorId: ahmed.id,
         partId: raspberryPi.id,
@@ -56,7 +56,7 @@ export class ReservationsService implements OnModuleInit {
       })
     }
 
-    if (fallbackPart && sara && fallbackPart.quantity >= 1) {
+    if (fallbackPart && sara && fallbackPart.availableQuantity >= 1) {
       await this.create({
         collaboratorId: sara.id,
         partId: fallbackPart.id,
@@ -96,7 +96,7 @@ export class ReservationsService implements OnModuleInit {
     ])
 
     if (this.shouldHoldQuantity(input.status)) {
-      await this.reducePartQuantity(part, input.quantity)
+      await this.applyHeldQuantity(part, input.status, input.quantity)
     }
 
     const reservation = this.reservationsRepository.create({
@@ -110,9 +110,6 @@ export class ReservationsService implements OnModuleInit {
 
   async update(id: number, input: Partial<ReservationInput>) {
     const reservation = await this.findOne(id)
-    const previousHeldQuantity = this.shouldHoldQuantity(reservation.status)
-      ? reservation.quantity
-      : 0
     const updatedReservation = { ...reservation, ...input }
 
     this.validateReservationInput(updatedReservation)
@@ -121,31 +118,21 @@ export class ReservationsService implements OnModuleInit {
       this.findPart(updatedReservation.partId),
       this.findCollaborator(updatedReservation.collaboratorId),
     ])
-    const nextHeldQuantity = this.shouldHoldQuantity(updatedReservation.status)
-      ? updatedReservation.quantity
-      : 0
+    if (this.shouldHoldQuantity(reservation.status)) {
+      const previousPart = await this.findPart(reservation.partId)
+      await this.releaseHeldQuantity(
+        previousPart,
+        reservation.status,
+        reservation.quantity
+      )
+    }
 
-    if (reservation.partId !== updatedReservation.partId) {
-      if (previousHeldQuantity > 0) {
-        const previousPart = await this.findPart(reservation.partId)
-        previousPart.quantity += previousHeldQuantity
-        await this.partsRepository.save(previousPart)
-      }
-
-      if (nextHeldQuantity > 0) {
-        await this.reducePartQuantity(part, nextHeldQuantity)
-      }
-    } else {
-      const quantityDelta = nextHeldQuantity - previousHeldQuantity
-
-      if (quantityDelta > 0) {
-        await this.reducePartQuantity(part, quantityDelta)
-      }
-
-      if (quantityDelta < 0) {
-        part.quantity += Math.abs(quantityDelta)
-        await this.partsRepository.save(part)
-      }
+    if (this.shouldHoldQuantity(updatedReservation.status)) {
+      await this.applyHeldQuantity(
+        part,
+        updatedReservation.status,
+        updatedReservation.quantity
+      )
     }
 
     Object.assign(reservation, {
@@ -162,8 +149,7 @@ export class ReservationsService implements OnModuleInit {
 
     if (this.shouldHoldQuantity(reservation.status)) {
       const part = await this.findPart(reservation.partId)
-      part.quantity += reservation.quantity
-      await this.partsRepository.save(part)
+      await this.releaseHeldQuantity(part, reservation.status, reservation.quantity)
     }
 
     await this.reservationsRepository.remove(reservation)
@@ -181,6 +167,17 @@ export class ReservationsService implements OnModuleInit {
       return reservation
     }
 
+    const part = await this.findPart(reservation.partId)
+    if (reservation.status === ReservationStatus.Reserved) {
+      part.reservedQuantity = Math.max(
+        0,
+        part.reservedQuantity - reservation.quantity
+      )
+      part.borrowedQuantity += reservation.quantity
+      this.syncLegacyPartFields(part)
+      await this.partsRepository.save(part)
+    }
+
     reservation.status = ReservationStatus.Borrowed
     return this.reservationsRepository.save(reservation)
   }
@@ -193,8 +190,7 @@ export class ReservationsService implements OnModuleInit {
     }
 
     const part = await this.findPart(reservation.partId)
-    part.quantity += reservation.quantity
-    await this.partsRepository.save(part)
+    await this.releaseHeldQuantity(part, reservation.status, reservation.quantity)
 
     reservation.status = ReservationStatus.Returned
     return this.reservationsRepository.save(reservation)
@@ -250,12 +246,44 @@ export class ReservationsService implements OnModuleInit {
     return collaborator
   }
 
-  private async reducePartQuantity(part: Part, quantity: number) {
-    if (quantity > part.quantity) {
+  private async applyHeldQuantity(
+    part: Part,
+    status: ReservationStatus,
+    quantity: number
+  ) {
+    if (quantity > part.availableQuantity) {
       throw new BadRequestException("cannot reserve more than available part quantity")
     }
 
-    part.quantity -= quantity
+    part.availableQuantity -= quantity
+    if (status === ReservationStatus.Reserved) {
+      part.reservedQuantity += quantity
+    }
+    if (status === ReservationStatus.Borrowed) {
+      part.borrowedQuantity += quantity
+    }
+    this.syncLegacyPartFields(part)
     await this.partsRepository.save(part)
+  }
+
+  private async releaseHeldQuantity(
+    part: Part,
+    status: ReservationStatus,
+    quantity: number
+  ) {
+    if (status === ReservationStatus.Reserved) {
+      part.reservedQuantity = Math.max(0, part.reservedQuantity - quantity)
+    }
+    if (status === ReservationStatus.Borrowed) {
+      part.borrowedQuantity = Math.max(0, part.borrowedQuantity - quantity)
+    }
+    part.availableQuantity += quantity
+    this.syncLegacyPartFields(part)
+    await this.partsRepository.save(part)
+  }
+
+  private syncLegacyPartFields(part: Part) {
+    part.quantity = part.availableQuantity
+    part.status = part.availableQuantity > 0 ? "Available" : "Not Available"
   }
 }

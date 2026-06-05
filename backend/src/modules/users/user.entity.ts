@@ -17,6 +17,12 @@ export enum UserRole {
   Viewer = "Viewer",
 }
 
+export enum EmailVerificationStatus {
+  Pending = "Pending",
+  Verified = "Verified",
+  Rejected = "Rejected",
+}
+
 @Entity("users")
 export class User {
   @PrimaryGeneratedColumn()
@@ -42,6 +48,13 @@ export class User {
 
   @Column({ nullable: true, type: "enum", enum: Division })
   managedDivision: Division | null
+
+  @Column({
+    type: "enum",
+    enum: EmailVerificationStatus,
+    default: EmailVerificationStatus.Verified,
+  })
+  emailVerificationStatus: EmailVerificationStatus
 
   @CreateDateColumn()
   createdAt: Date

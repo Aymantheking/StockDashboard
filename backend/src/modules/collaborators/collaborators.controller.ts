@@ -55,4 +55,25 @@ export class CollaboratorsController {
   remove(@Param("id", ParseIntPipe) id: number) {
     return this.collaboratorsService.remove(id)
   }
+
+  @Roles(UserRole.Admin, UserRole.InventoryManager)
+  @Get(":id/rating-history")
+  getRatingHistory(@Param("id", ParseIntPipe) id: number) {
+    return this.collaboratorsService.getRatingHistory(id)
+  }
+
+  @Roles(UserRole.Admin, UserRole.InventoryManager)
+  @Put(":id/rating")
+  adjustRating(
+    @Param("id", ParseIntPipe) id: number,
+    @Body() body: { rating: number; reason: string },
+    @Req() request: AuthenticatedRequest
+  ) {
+    return this.collaboratorsService.adjustRating(
+      id,
+      Number(body.rating),
+      body.reason || "Manual rating adjustment",
+      request.user.email
+    )
+  }
 }

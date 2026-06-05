@@ -43,6 +43,9 @@ export class Collaborator {
   @Column()
   role: string
 
+  @Column({ default: 5, type: "float" })
+  rating: number
+
   @OneToMany(() => Reservation, (reservation) => reservation.collaborator)
   reservations: Reservation[]
 

@@ -2,7 +2,7 @@ import { BadRequestException, Injectable, UnauthorizedException } from "@nestjs/
 import { JwtService } from "@nestjs/jwt"
 import * as bcrypt from "bcryptjs"
 import { UsersService } from "../users/users.service"
-import { UserRole } from "../users/user.entity"
+import { EmailVerificationStatus, UserRole } from "../users/user.entity"
 import {
   CollaboratorGroup,
   Division,
@@ -32,9 +32,15 @@ export class AuthService {
       ...input,
       role: UserRole.Collaborator,
       managedDivision: null,
+      emailVerificationStatus: EmailVerificationStatus.Pending,
     })
 
-    return this.createAuthResponse(user.id)
+    return {
+      accessToken: "",
+      user: this.usersService.toPublicUser(user),
+      message:
+        "Your account was created. Please wait for administrator verification.",
+    }
   }
 
   async login(email: string, password: string) {
@@ -46,6 +52,12 @@ export class AuthService {
 
     if (!user) {
       throw new UnauthorizedException("Invalid email or password")
+    }
+
+    if (user.emailVerificationStatus !== EmailVerificationStatus.Verified) {
+      throw new UnauthorizedException(
+        "Your account is pending administrator verification"
+      )
     }
 
     const isPasswordValid = await bcrypt.compare(password, user.passwordHash)

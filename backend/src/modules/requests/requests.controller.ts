@@ -62,4 +62,48 @@ export class RequestsController {
       request.user
     )
   }
+
+  @Roles(UserRole.Admin, UserRole.InventoryManager)
+  @Put(":id/mark-damaged")
+  markDamaged(
+    @Param("id", ParseIntPipe) id: number,
+    @Body() body: { managerComment?: string },
+    @Req() request: AuthenticatedRequest
+  ) {
+    return this.requestsService.markDamaged(
+      id,
+      body.managerComment || "",
+      request.user
+    )
+  }
+
+  @Roles(UserRole.Collaborator, UserRole.Admin, UserRole.InventoryManager)
+  @Put(":id/declare-return")
+  declareReturn(
+    @Param("id", ParseIntPipe) id: number,
+    @Body()
+    body: {
+      goodQuantity: number
+      damagedQuantity: number
+      comment?: string
+    },
+    @Req() request: AuthenticatedRequest
+  ) {
+    return this.requestsService.declareReturn(id, body, request.user)
+  }
+
+  @Roles(UserRole.Admin, UserRole.InventoryManager)
+  @Put(":id/confirm-return")
+  confirmReturn(
+    @Param("id", ParseIntPipe) id: number,
+    @Body()
+    body: {
+      confirmedGoodQuantity: number
+      confirmedDamagedQuantity: number
+      managerComment?: string
+    },
+    @Req() request: AuthenticatedRequest
+  ) {
+    return this.requestsService.confirmReturn(id, body, request.user)
+  }
 }

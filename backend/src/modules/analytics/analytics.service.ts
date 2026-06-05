@@ -31,7 +31,7 @@ export class AnalyticsService {
     ])
 
     const lowStockItems = parts.filter(
-      (part) => part.status === "Low Stock" || part.quantity <= 5
+      (part) => part.availableQuantity <= 5 && part.availableQuantity > 0
     )
     const borrowedReservations = reservations.filter(
       (reservation) => reservation.status === ReservationStatus.Borrowed
@@ -45,15 +45,12 @@ export class AnalyticsService {
 
     return {
       totalParts: parts.length,
-      availableParts: parts.filter((part) => part.status === "Available").length,
-      borrowedParts: borrowedReservations.reduce(
-        (total, reservation) => total + reservation.quantity,
+      availableParts: parts.reduce(
+        (total, part) => total + part.availableQuantity,
         0
       ),
-      reservedParts: reservedReservations.reduce(
-        (total, reservation) => total + reservation.quantity,
-        0
-      ),
+      borrowedParts: parts.reduce((total, part) => total + part.borrowedQuantity, 0),
+      reservedParts: parts.reduce((total, part) => total + part.reservedQuantity, 0),
       lowStockParts: lowStockItems.length,
       lowStockItems,
       totalCollaborators: collaborators.length,

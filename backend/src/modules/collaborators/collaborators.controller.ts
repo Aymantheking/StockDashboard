@@ -7,8 +7,10 @@ import {
   ParseIntPipe,
   Post,
   Put,
+  Req,
   UseGuards,
 } from "@nestjs/common"
+import { AuthenticatedRequest } from "../../common/authenticated-request"
 import { Roles } from "../../common/roles.decorator"
 import { RolesGuard } from "../../common/roles.guard"
 import { JwtAuthGuard } from "../auth/jwt-auth.guard"
@@ -23,8 +25,8 @@ export class CollaboratorsController {
 
   @Roles(UserRole.Admin, UserRole.InventoryManager, UserRole.Viewer)
   @Get()
-  findAll() {
-    return this.collaboratorsService.findAll()
+  findAll(@Req() request: AuthenticatedRequest) {
+    return this.collaboratorsService.findAllForUser(request.user)
   }
 
   @Roles(UserRole.Admin, UserRole.InventoryManager, UserRole.Viewer)
@@ -52,5 +54,26 @@ export class CollaboratorsController {
   @Delete(":id")
   remove(@Param("id", ParseIntPipe) id: number) {
     return this.collaboratorsService.remove(id)
+  }
+
+  @Roles(UserRole.Admin, UserRole.InventoryManager)
+  @Get(":id/rating-history")
+  getRatingHistory(@Param("id", ParseIntPipe) id: number) {
+    return this.collaboratorsService.getRatingHistory(id)
+  }
+
+  @Roles(UserRole.Admin, UserRole.InventoryManager)
+  @Put(":id/rating")
+  adjustRating(
+    @Param("id", ParseIntPipe) id: number,
+    @Body() body: { rating: number; reason: string },
+    @Req() request: AuthenticatedRequest
+  ) {
+    return this.collaboratorsService.adjustRating(
+      id,
+      Number(body.rating),
+      body.reason || "Manual rating adjustment",
+      request.user.email
+    )
   }
 }

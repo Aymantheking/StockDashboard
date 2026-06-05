@@ -21,7 +21,9 @@ export enum RequestStatus {
   Rejected = "Rejected",
   Borrowed = "Borrowed",
   Reserved = "Reserved",
+  ReturnPending = "Return Pending",
   Returned = "Returned",
+  Damaged = "Damaged",
   Cancelled = "Cancelled",
 }
 
@@ -48,11 +50,44 @@ export class PartRequest {
   @Column({ type: "date" })
   expectedReturnDate: string
 
+  @Column({ nullable: true, type: "date" })
+  usageDate: string | null
+
+  @Column({ nullable: true, type: "date" })
+  startDate: string | null
+
+  @Column({ nullable: true, type: "date" })
+  dueDate: string | null
+
   @Column({ type: "enum", enum: RequestStatus, default: RequestStatus.Pending })
   status: RequestStatus
 
   @Column({ nullable: true, type: "text" })
   managerComment: string
+
+  @Column({ nullable: true, type: "timestamp" })
+  returnDeclaredAt: Date | null
+
+  @Column({ nullable: true })
+  returnGoodQuantity: number | null
+
+  @Column({ nullable: true })
+  returnDamagedQuantity: number | null
+
+  @Column({ nullable: true, type: "text" })
+  returnComment: string | null
+
+  @Column({ nullable: true, type: "timestamp" })
+  returnConfirmedAt: Date | null
+
+  @Column({ nullable: true })
+  confirmedGoodQuantity: number | null
+
+  @Column({ nullable: true })
+  confirmedDamagedQuantity: number | null
+
+  @Column({ nullable: true, type: "text" })
+  returnManagerComment: string | null
 
   @ManyToOne(() => Collaborator, { onDelete: "CASCADE" })
   @JoinColumn({ name: "collaboratorId" })

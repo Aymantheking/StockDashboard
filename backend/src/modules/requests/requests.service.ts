@@ -12,6 +12,7 @@ import {
   CollaboratorGroup,
   Division,
 } from "../collaborators/collaborator.entity"
+import { RatingHistory } from "../collaborators/rating-history.entity"
 import { Part } from "../parts/part.entity"
 import { UserRole } from "../users/user.entity"
 import { PartRequest, RequestStatus, RequestType } from "./part-request.entity"
@@ -22,7 +23,22 @@ type CreateRequestInput = {
   quantity: number
   requestType: RequestType
   reason: string
-  expectedReturnDate: string
+  expectedReturnDate?: string
+  usageDate?: string
+  startDate?: string
+  dueDate?: string
+}
+
+type DeclareReturnInput = {
+  goodQuantity: number
+  damagedQuantity: number
+  comment?: string
+}
+
+type ConfirmReturnInput = {
+  confirmedGoodQuantity: number
+  confirmedDamagedQuantity: number
+  managerComment?: string
 }
 
 @Injectable()
@@ -33,7 +49,9 @@ export class RequestsService {
     @InjectRepository(Part)
     private readonly partsRepository: Repository<Part>,
     @InjectRepository(Collaborator)
-    private readonly collaboratorsRepository: Repository<Collaborator>
+    private readonly collaboratorsRepository: Repository<Collaborator>,
+    @InjectRepository(RatingHistory)
+    private readonly ratingHistoryRepository: Repository<RatingHistory>
   ) {}
 
   async findAll(user: AuthenticatedUser) {
@@ -65,7 +83,7 @@ export class RequestsService {
     const collaborator = await this.resolveCollaborator(input, user)
     const part = await this.findPart(input.partId)
 
-    if (input.quantity > part.quantity) {
+    if (input.quantity > part.availableQuantity) {
       throw new BadRequestException("cannot request more than available quantity")
     }
 
@@ -75,7 +93,10 @@ export class RequestsService {
       quantity: input.quantity,
       requestType: input.requestType,
       reason: input.reason.trim(),
-      expectedReturnDate: input.expectedReturnDate,
+      expectedReturnDate: this.getExpectedReturnDate(input),
+      usageDate: input.requestType === RequestType.Reservation ? input.usageDate : null,
+      startDate: input.requestType === RequestType.Borrow ? input.startDate : null,
+      dueDate: input.requestType === RequestType.Borrow ? input.dueDate : null,
       status: RequestStatus.Pending,
       managerComment: "",
     })
@@ -93,11 +114,17 @@ export class RequestsService {
 
     const part = await this.findPart(request.partId)
 
-    if (request.quantity > part.quantity) {
+    if (request.quantity > part.availableQuantity) {
       throw new BadRequestException("cannot approve more than available quantity")
     }
 
-    part.quantity -= request.quantity
+    part.availableQuantity -= request.quantity
+    if (request.requestType === RequestType.Reservation) {
+      part.reservedQuantity += request.quantity
+    } else {
+      part.borrowedQuantity += request.quantity
+    }
+    this.syncLegacyPartFields(part)
     await this.partsRepository.save(part)
 
     request.status =
@@ -127,7 +154,10 @@ export class RequestsService {
     const request = await this.findOne(id)
     this.assertCanManageRequest(request, user)
 
-    if (request.status === RequestStatus.Returned) {
+    if (
+      request.status === RequestStatus.Returned ||
+      request.status === RequestStatus.Damaged
+    ) {
       throw new BadRequestException("request has already been returned")
     }
 
@@ -139,11 +169,148 @@ export class RequestsService {
     }
 
     const part = await this.findPart(request.partId)
-    part.quantity += request.quantity
+    if (request.status === RequestStatus.Reserved) {
+      part.reservedQuantity = Math.max(0, part.reservedQuantity - request.quantity)
+    } else {
+      part.borrowedQuantity = Math.max(0, part.borrowedQuantity - request.quantity)
+    }
+    part.availableQuantity += request.quantity
+    this.syncLegacyPartFields(part)
     await this.partsRepository.save(part)
 
     request.status = RequestStatus.Returned
     request.managerComment = managerComment || request.managerComment
+
+    await this.applyReturnRatingRule(request, user)
+
+    return this.requestsRepository.save(request)
+  }
+
+  async declareReturn(
+    id: number,
+    input: DeclareReturnInput,
+    user: AuthenticatedUser
+  ) {
+    const request = await this.findOne(id)
+
+    if (user.role === UserRole.Collaborator) {
+      const collaborator = await this.findOrCreateCollaboratorForUser(user)
+      if (request.collaboratorId !== collaborator.id) {
+        throw new ForbiddenException("you can only declare your own returns")
+      }
+    }
+
+    if (
+      request.status !== RequestStatus.Reserved &&
+      request.status !== RequestStatus.Borrowed
+    ) {
+      throw new BadRequestException("only active requests can be declared returned")
+    }
+
+    this.validateReturnQuantities(
+      input.goodQuantity,
+      input.damagedQuantity,
+      request.quantity,
+      input.comment
+    )
+
+    request.status = RequestStatus.ReturnPending
+    request.returnDeclaredAt = new Date()
+    request.returnGoodQuantity = input.goodQuantity
+    request.returnDamagedQuantity = input.damagedQuantity
+    request.returnComment = input.comment?.trim() || ""
+
+    return this.requestsRepository.save(request)
+  }
+
+  async confirmReturn(
+    id: number,
+    input: ConfirmReturnInput,
+    user: AuthenticatedUser
+  ) {
+    const request = await this.findOne(id)
+    this.assertCanManageRequest(request, user)
+
+    if (request.status !== RequestStatus.ReturnPending) {
+      throw new BadRequestException("only return pending requests can be confirmed")
+    }
+
+    this.validateReturnQuantities(
+      input.confirmedGoodQuantity,
+      input.confirmedDamagedQuantity,
+      request.quantity,
+      input.managerComment
+    )
+
+    const part = await this.findPart(request.partId)
+    if (request.requestType === RequestType.Reservation) {
+      part.reservedQuantity = Math.max(0, part.reservedQuantity - request.quantity)
+    } else {
+      part.borrowedQuantity = Math.max(0, part.borrowedQuantity - request.quantity)
+    }
+    part.availableQuantity += input.confirmedGoodQuantity
+    part.damagedQuantity += input.confirmedDamagedQuantity
+    this.syncLegacyPartFields(part)
+    await this.partsRepository.save(part)
+
+    request.returnConfirmedAt = new Date()
+    request.confirmedGoodQuantity = input.confirmedGoodQuantity
+    request.confirmedDamagedQuantity = input.confirmedDamagedQuantity
+    request.returnManagerComment = input.managerComment?.trim() || ""
+    request.managerComment =
+      request.returnManagerComment || request.managerComment || ""
+    request.status =
+      input.confirmedDamagedQuantity > 0
+        ? RequestStatus.Damaged
+        : RequestStatus.Returned
+
+    await this.applyReturnRatingRule(request, user)
+    if (input.confirmedDamagedQuantity > 0) {
+      await this.adjustCollaboratorRating(
+        request.collaborator,
+        -2,
+        `Returned ${input.confirmedDamagedQuantity} damaged item${
+          input.confirmedDamagedQuantity === 1 ? "" : "s"
+        }`,
+        user.email
+      )
+    }
+
+    return this.requestsRepository.save(request)
+  }
+
+  async markDamaged(id: number, managerComment = "", user: AuthenticatedUser) {
+    const request = await this.findOne(id)
+    this.assertCanManageRequest(request, user)
+
+    if (
+      request.status !== RequestStatus.Reserved &&
+      request.status !== RequestStatus.Borrowed
+    ) {
+      throw new BadRequestException("only active requests can be marked damaged")
+    }
+
+    request.managerComment =
+      managerComment || "Item marked damaged or lost by manager"
+
+    const part = await this.findPart(request.partId)
+    if (request.status === RequestStatus.Reserved) {
+      part.reservedQuantity = Math.max(0, part.reservedQuantity - request.quantity)
+    } else {
+      part.borrowedQuantity = Math.max(0, part.borrowedQuantity - request.quantity)
+    }
+    part.damagedQuantity += request.quantity
+    this.syncLegacyPartFields(part)
+    await this.partsRepository.save(part)
+
+    await this.adjustCollaboratorRating(
+      request.collaborator,
+      -2,
+      request.managerComment,
+      user.email
+    )
+
+    request.status = RequestStatus.Returned
 
     return this.requestsRepository.save(request)
   }
@@ -196,9 +363,73 @@ export class RequestsService {
       throw new BadRequestException("reason is required")
     }
 
-    if (!input.expectedReturnDate) {
-      throw new BadRequestException("expectedReturnDate is required")
+    if (input.requestType === RequestType.Reservation && !input.usageDate) {
+      throw new BadRequestException("usageDate is required for reservations")
     }
+
+    if (input.requestType === RequestType.Reservation && this.isPastDate(input.usageDate)) {
+      throw new BadRequestException("Date cannot be in the past")
+    }
+
+    if (input.requestType === RequestType.Borrow) {
+      if (!input.startDate) {
+        throw new BadRequestException("startDate is required for borrowing")
+      }
+
+      if (!input.dueDate) {
+        throw new BadRequestException("dueDate is required for borrowing")
+      }
+
+      if (input.dueDate < input.startDate) {
+        throw new BadRequestException("dueDate must be after or equal startDate")
+      }
+
+      if (this.isPastDate(input.startDate) || this.isPastDate(input.dueDate)) {
+        throw new BadRequestException("Date cannot be in the past")
+      }
+    }
+  }
+
+  private validateReturnQuantities(
+    goodQuantity: number,
+    damagedQuantity: number,
+    totalQuantity: number,
+    comment?: string
+  ) {
+    if (
+      !Number.isInteger(Number(goodQuantity)) ||
+      !Number.isInteger(Number(damagedQuantity)) ||
+      goodQuantity < 0 ||
+      damagedQuantity < 0
+    ) {
+      throw new BadRequestException("return quantities must be zero or greater")
+    }
+
+    if (goodQuantity + damagedQuantity !== totalQuantity) {
+      throw new BadRequestException(
+        "good and damaged quantities must equal original quantity"
+      )
+    }
+
+    if (damagedQuantity > 0 && !comment?.trim()) {
+      throw new BadRequestException("comment is required for damaged returns")
+    }
+  }
+
+  private isPastDate(value?: string) {
+    if (!value) {
+      return false
+    }
+
+    return value < new Date().toISOString().slice(0, 10)
+  }
+
+  private getExpectedReturnDate(input: CreateRequestInput) {
+    if (input.requestType === RequestType.Reservation) {
+      return input.usageDate
+    }
+
+    return input.dueDate
   }
 
   private async resolveCollaborator(
@@ -252,5 +483,67 @@ export class RequestsService {
     }
 
     return part
+  }
+
+  private syncLegacyPartFields(part: Part) {
+    part.quantity = part.availableQuantity
+    part.status = part.availableQuantity > 0 ? "Available" : "Not Available"
+  }
+
+  private async applyReturnRatingRule(
+    request: PartRequest,
+    user: AuthenticatedUser
+  ) {
+    if (request.requestType !== RequestType.Borrow || !request.dueDate) {
+      return
+    }
+
+    const today = new Date()
+    today.setHours(0, 0, 0, 0)
+
+    const dueDate = new Date(`${request.dueDate}T00:00:00`)
+    const lateDays = Math.floor(
+      (today.getTime() - dueDate.getTime()) / (1000 * 60 * 60 * 24)
+    )
+
+    if (lateDays <= 0) {
+      return
+    }
+
+    const penalty = lateDays <= 3 ? -0.5 : lateDays <= 7 ? -1 : -2
+    await this.adjustCollaboratorRating(
+      request.collaborator,
+      penalty,
+      `Late return by ${lateDays} day${lateDays === 1 ? "" : "s"}`,
+      user.email
+    )
+  }
+
+  private async adjustCollaboratorRating(
+    collaborator: Collaborator | undefined,
+    delta: number,
+    reason: string,
+    changedBy: string
+  ) {
+    if (!collaborator) {
+      return
+    }
+
+    const previousRating = collaborator.rating || 5
+    const nextRating = Math.max(1, Math.min(5, previousRating + delta))
+
+    if (nextRating === previousRating) {
+      return
+    }
+
+    collaborator.rating = nextRating
+    await this.collaboratorsRepository.save(collaborator)
+    await this.ratingHistoryRepository.save({
+      collaboratorId: collaborator.id,
+      previousRating,
+      newRating: nextRating,
+      reason,
+      changedBy,
+    })
   }
 }

@@ -7,14 +7,22 @@ import { AnalyticsModule } from "./modules/analytics/analytics.module"
 import { AuthModule } from "./modules/auth/auth.module"
 import { Collaborator } from "./modules/collaborators/collaborator.entity"
 import { CollaboratorsModule } from "./modules/collaborators/collaborators.module"
+import { RatingHistory } from "./modules/collaborators/rating-history.entity"
 import { MissingItemRequest } from "./modules/missing-item-requests/missing-item-request.entity"
 import { MissingItemRequestsModule } from "./modules/missing-item-requests/missing-item-requests.module"
+import { NotificationsModule } from "./modules/notifications/notifications.module"
 import { Part } from "./modules/parts/part.entity"
 import { PartsModule } from "./modules/parts/parts.module"
+import { Purchase } from "./modules/purchases/purchase.entity"
+import { PurchasesModule } from "./modules/purchases/purchases.module"
 import { PartRequest } from "./modules/requests/part-request.entity"
 import { RequestsModule } from "./modules/requests/requests.module"
 import { Reservation } from "./modules/reservations/reservation.entity"
 import { ReservationsModule } from "./modules/reservations/reservations.module"
+import { AppSetting } from "./modules/settings/app-setting.entity"
+import { SettingsModule } from "./modules/settings/settings.module"
+import { Supplier } from "./modules/suppliers/supplier.entity"
+import { SuppliersModule } from "./modules/suppliers/suppliers.module"
 import { User } from "./modules/users/user.entity"
 import { UsersModule } from "./modules/users/users.module"
 
@@ -37,6 +45,10 @@ import { UsersModule } from "./modules/users/users.module"
           User,
           PartRequest,
           MissingItemRequest,
+          RatingHistory,
+          AppSetting,
+          Purchase,
+          Supplier,
         ],
         synchronize: process.env.NODE_ENV !== "production",
       }),
@@ -49,6 +61,10 @@ import { UsersModule } from "./modules/users/users.module"
     AnalyticsModule,
     RequestsModule,
     MissingItemRequestsModule,
+    SettingsModule,
+    PurchasesModule,
+    SuppliersModule,
+    NotificationsModule,
   ],
   controllers: [AppController],
   providers: [AppService],

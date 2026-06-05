@@ -2,7 +2,7 @@ import { Body, Controller, Get, Param, ParseIntPipe, Put, UseGuards } from "@nes
 import { Roles } from "../../common/roles.decorator"
 import { RolesGuard } from "../../common/roles.guard"
 import { JwtAuthGuard } from "../auth/jwt-auth.guard"
-import { UserRole } from "./user.entity"
+import { EmailVerificationStatus, UserRole } from "./user.entity"
 import { UsersService } from "./users.service"
 
 @UseGuards(JwtAuthGuard, RolesGuard)
@@ -27,6 +27,24 @@ export class UsersController {
     }
   ) {
     const user = await this.usersService.updateAssignment(id, body)
+    return this.usersService.toPublicUser(user)
+  }
+
+  @Put(":id/verify")
+  async verifyUser(@Param("id", ParseIntPipe) id: number) {
+    const user = await this.usersService.updateVerificationStatus(
+      id,
+      EmailVerificationStatus.Verified
+    )
+    return this.usersService.toPublicUser(user)
+  }
+
+  @Put(":id/reject")
+  async rejectUser(@Param("id", ParseIntPipe) id: number) {
+    const user = await this.usersService.updateVerificationStatus(
+      id,
+      EmailVerificationStatus.Rejected
+    )
     return this.usersService.toPublicUser(user)
   }
 }

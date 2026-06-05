@@ -11,7 +11,7 @@ import {
   CollaboratorGroup,
   Division,
 } from "../collaborators/collaborator.entity"
-import { User, UserRole } from "./user.entity"
+import { EmailVerificationStatus, User, UserRole } from "./user.entity"
 
 type CreateUserInput = {
   name: string
@@ -21,6 +21,7 @@ type CreateUserInput = {
   division: Division
   group: CollaboratorGroup
   managedDivision?: Division | null
+  emailVerificationStatus?: EmailVerificationStatus
 }
 
 type UpdateUserAssignmentInput = {
@@ -36,40 +37,9 @@ export class UsersService implements OnModuleInit {
   ) {}
 
   async onModuleInit() {
-    const count = await this.usersRepository.count()
-
-    if (count > 0) {
-      await this.ensureManagedDivisionDefaults()
-      return
-    }
-
-    await this.create({
-      name: "Admin User",
-      email: "admin@stockdashboard.local",
-      password: "admin123",
-      role: UserRole.Admin,
-      division: Division.Admin,
-      group: CollaboratorGroup.Group1,
-      managedDivision: null,
-    })
-    await this.create({
-      name: "Inventory Manager",
-      email: "manager@stockdashboard.local",
-      password: "manager123",
-      role: UserRole.InventoryManager,
-      division: Division.Division1,
-      group: CollaboratorGroup.Group1,
-      managedDivision: Division.Division1,
-    })
-    await this.create({
-      name: "Local Collaborator",
-      email: "collaborator@stockdashboard.local",
-      password: "user123",
-      role: UserRole.Collaborator,
-      division: Division.Division2,
-      group: CollaboratorGroup.Group2,
-      managedDivision: null,
-    })
+    await this.ensureDefaultUsers()
+    await this.ensureManagedDivisionDefaults()
+    await this.ensureTestUsers()
   }
 
   findAll() {
@@ -111,7 +81,23 @@ export class UsersService implements OnModuleInit {
       division: input.division,
       group: input.group,
       managedDivision: input.managedDivision || null,
+      emailVerificationStatus:
+        input.emailVerificationStatus || EmailVerificationStatus.Verified,
     })
+
+    return this.usersRepository.save(user)
+  }
+
+  async updateVerificationStatus(
+    id: number,
+    emailVerificationStatus: EmailVerificationStatus
+  ) {
+    if (!Object.values(EmailVerificationStatus).includes(emailVerificationStatus)) {
+      throw new BadRequestException("Email verification status is invalid")
+    }
+
+    const user = await this.findById(id)
+    user.emailVerificationStatus = emailVerificationStatus
 
     return this.usersRepository.save(user)
   }
@@ -153,6 +139,7 @@ export class UsersService implements OnModuleInit {
       division: user.division,
       group: user.group,
       managedDivision: user.managedDivision,
+      emailVerificationStatus: user.emailVerificationStatus,
     }
   }
 
@@ -172,6 +159,172 @@ export class UsersService implements OnModuleInit {
           })
         )
     )
+  }
+
+  private async ensureDefaultUsers() {
+    await this.createSeedUser({
+      name: "Admin User",
+      email: "admin@stockdashboard.local",
+      password: "admin123",
+      role: UserRole.Admin,
+      division: Division.Admin,
+      group: CollaboratorGroup.Group1,
+      managedDivision: null,
+      emailVerificationStatus: EmailVerificationStatus.Verified,
+    })
+    await this.createSeedUser({
+      name: "Inventory Manager",
+      email: "manager@stockdashboard.local",
+      password: "manager123",
+      role: UserRole.InventoryManager,
+      division: Division.Division1,
+      group: CollaboratorGroup.Group1,
+      managedDivision: Division.Division1,
+      emailVerificationStatus: EmailVerificationStatus.Verified,
+    })
+    await this.createSeedUser({
+      name: "Local Collaborator",
+      email: "collaborator@stockdashboard.local",
+      password: "user123",
+      role: UserRole.Collaborator,
+      division: Division.Division2,
+      group: CollaboratorGroup.Group2,
+      managedDivision: null,
+      emailVerificationStatus: EmailVerificationStatus.Verified,
+    })
+  }
+
+  private async ensureTestUsers() {
+    const password = "Password123!"
+    const users: CreateUserInput[] = [
+      {
+        name: "Admin One",
+        email: "admin1@bertrandt.com",
+        password,
+        role: UserRole.Admin,
+        division: Division.Admin,
+        group: CollaboratorGroup.Group1,
+        managedDivision: null,
+        emailVerificationStatus: EmailVerificationStatus.Verified,
+      },
+      {
+        name: "Manager Division 1",
+        email: "manager.div1@bertrandt.com",
+        password,
+        role: UserRole.InventoryManager,
+        division: Division.Division1,
+        group: CollaboratorGroup.Group1,
+        managedDivision: Division.Division1,
+        emailVerificationStatus: EmailVerificationStatus.Verified,
+      },
+      {
+        name: "Manager Division 2",
+        email: "manager.div2@bertrandt.com",
+        password,
+        role: UserRole.InventoryManager,
+        division: Division.Division2,
+        group: CollaboratorGroup.Group2,
+        managedDivision: Division.Division2,
+        emailVerificationStatus: EmailVerificationStatus.Verified,
+      },
+      {
+        name: "Manager Division 3",
+        email: "manager.div3@bertrandt.com",
+        password,
+        role: UserRole.InventoryManager,
+        division: Division.Division3,
+        group: CollaboratorGroup.Group3,
+        managedDivision: Division.Division3,
+        emailVerificationStatus: EmailVerificationStatus.Verified,
+      },
+      {
+        name: "Manager Division 4",
+        email: "manager.div4@bertrandt.com",
+        password,
+        role: UserRole.InventoryManager,
+        division: Division.Division4,
+        group: CollaboratorGroup.Group4,
+        managedDivision: Division.Division4,
+        emailVerificationStatus: EmailVerificationStatus.Verified,
+      },
+      {
+        name: "Collaborator Division 1",
+        email: "collab.div1@bertrandt.com",
+        password,
+        role: UserRole.Collaborator,
+        division: Division.Division1,
+        group: CollaboratorGroup.Group1,
+        managedDivision: null,
+        emailVerificationStatus: EmailVerificationStatus.Verified,
+      },
+      {
+        name: "Collaborator Division 2",
+        email: "collab.div2@bertrandt.com",
+        password,
+        role: UserRole.Collaborator,
+        division: Division.Division2,
+        group: CollaboratorGroup.Group2,
+        managedDivision: null,
+        emailVerificationStatus: EmailVerificationStatus.Verified,
+      },
+      {
+        name: "Collaborator Division 3",
+        email: "collab.div3@bertrandt.com",
+        password,
+        role: UserRole.Collaborator,
+        division: Division.Division3,
+        group: CollaboratorGroup.Group3,
+        managedDivision: null,
+        emailVerificationStatus: EmailVerificationStatus.Verified,
+      },
+      {
+        name: "Collaborator Division 4",
+        email: "collab.div4@bertrandt.com",
+        password,
+        role: UserRole.Collaborator,
+        division: Division.Division4,
+        group: CollaboratorGroup.Group4,
+        managedDivision: null,
+        emailVerificationStatus: EmailVerificationStatus.Verified,
+      },
+      {
+        name: "Viewer User",
+        email: "viewer@bertrandt.com",
+        password,
+        role: UserRole.Viewer,
+        division: Division.Division1,
+        group: CollaboratorGroup.Group1,
+        managedDivision: null,
+        emailVerificationStatus: EmailVerificationStatus.Verified,
+      },
+    ]
+
+    for (const user of users) {
+      await this.createSeedUser(user)
+    }
+  }
+
+  private async createSeedUser(input: CreateUserInput) {
+    const email = input.email.toLowerCase().trim()
+    const existingUser = await this.findByEmail(email)
+
+    if (existingUser) {
+      return existingUser
+    }
+
+    const passwordHash = await bcrypt.hash(input.password, 10)
+    const user = this.usersRepository.create({
+      name: input.name.trim(),
+      email,
+      passwordHash,
+      role: input.role,
+      division: input.division,
+      group: input.group,
+      managedDivision: input.managedDivision || null,
+      emailVerificationStatus: EmailVerificationStatus.Verified,
+    })
+
+    return this.usersRepository.save(user)
   }
 
   private validate(input: CreateUserInput) {

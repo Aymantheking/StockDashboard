@@ -12,6 +12,8 @@ import {
   Division,
 } from "../collaborators/collaborator.entity"
 import { EmailVerificationStatus, User, UserRole } from "./user.entity"
+import { NotificationType } from "../notifications/notification.entity"
+import { NotificationsService } from "../notifications/notifications.service"
 
 type CreateUserInput = {
   name: string
@@ -33,7 +35,8 @@ type UpdateUserAssignmentInput = {
 export class UsersService implements OnModuleInit {
   constructor(
     @InjectRepository(User)
-    private readonly usersRepository: Repository<User>
+    private readonly usersRepository: Repository<User>,
+    private readonly notificationsService: NotificationsService
   ) {}
 
   async onModuleInit() {
@@ -85,7 +88,21 @@ export class UsersService implements OnModuleInit {
         input.emailVerificationStatus || EmailVerificationStatus.Verified,
     })
 
-    return this.usersRepository.save(user)
+    const savedUser = await this.usersRepository.save(user)
+    if (
+      savedUser.emailVerificationStatus === EmailVerificationStatus.Pending
+    ) {
+      await this.notificationsService.notifyAdmins({
+        title: "New user verification required",
+        message: `${savedUser.email} is waiting for verification.`,
+        type: NotificationType.UserVerificationPending,
+        targetPage: "Settings",
+        targetSection: "UserVerification",
+        targetId: savedUser.id,
+        isActionable: true,
+      })
+    }
+    return savedUser
   }
 
   async updateVerificationStatus(

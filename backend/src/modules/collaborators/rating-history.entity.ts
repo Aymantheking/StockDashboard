@@ -13,6 +13,9 @@ export class RatingHistory {
   @PrimaryGeneratedColumn()
   id: number
 
+  @Column({ type: "int", nullable: true, unique: true })
+  requestId: number | null
+
   @Column({ type: "int" })
   collaboratorId: number
 

@@ -14,6 +14,8 @@ import {
 } from "../collaborators/collaborator.entity"
 import { RatingHistory } from "../collaborators/rating-history.entity"
 import { Part } from "../parts/part.entity"
+import { NotificationType } from "../notifications/notification.entity"
+import { NotificationsService } from "../notifications/notifications.service"
 import { UserRole } from "../users/user.entity"
 import { PartRequest, RequestStatus, RequestType } from "./part-request.entity"
 
@@ -51,7 +53,8 @@ export class RequestsService {
     @InjectRepository(Collaborator)
     private readonly collaboratorsRepository: Repository<Collaborator>,
     @InjectRepository(RatingHistory)
-    private readonly ratingHistoryRepository: Repository<RatingHistory>
+    private readonly ratingHistoryRepository: Repository<RatingHistory>,
+    private readonly notificationsService: NotificationsService
   ) {}
 
   async findAll(user: AuthenticatedUser) {
@@ -101,7 +104,20 @@ export class RequestsService {
       managerComment: "",
     })
 
-    return this.requestsRepository.save(request)
+    const savedRequest = await this.requestsRepository.save(request)
+    await this.notificationsService.notifyManagersAndAdmins(
+      collaborator.division,
+      {
+        title: "New part request",
+        message: `${collaborator.name} requested ${part.name}.`,
+        type: NotificationType.PartRequestCreated,
+        targetPage: "Requests",
+        targetSection: "PartRequests",
+        targetId: savedRequest.id,
+        isActionable: true,
+      }
+    )
+    return savedRequest
   }
 
   async approve(id: number, managerComment = "", user: AuthenticatedUser) {
@@ -133,7 +149,20 @@ export class RequestsService {
         : RequestStatus.Borrowed
     request.managerComment = managerComment
 
-    return this.requestsRepository.save(request)
+    const savedRequest = await this.requestsRepository.save(request)
+    await this.notificationsService.resolveActionable("Requests", request.id)
+    await this.notificationsService.notifyCollaboratorEmail(
+      request.collaborator?.email,
+      {
+        title: "Request approved",
+        message: `Your request for ${request.part?.name || "a part"} was approved.`,
+        type: NotificationType.PartRequestApproved,
+        targetPage: "My Requests",
+        targetSection: "MyPartRequests",
+        targetId: request.id,
+      }
+    )
+    return savedRequest
   }
 
   async reject(id: number, managerComment = "", user: AuthenticatedUser) {
@@ -147,7 +176,20 @@ export class RequestsService {
     request.status = RequestStatus.Rejected
     request.managerComment = managerComment
 
-    return this.requestsRepository.save(request)
+    const savedRequest = await this.requestsRepository.save(request)
+    await this.notificationsService.resolveActionable("Requests", request.id)
+    await this.notificationsService.notifyCollaboratorEmail(
+      request.collaborator?.email,
+      {
+        title: "Request rejected",
+        message: `Your request for ${request.part?.name || "a part"} was rejected.${managerComment ? ` ${managerComment}` : ""}`,
+        type: NotificationType.PartRequestRejected,
+        targetPage: "My Requests",
+        targetSection: "MyPartRequests",
+        targetId: request.id,
+      }
+    )
+    return savedRequest
   }
 
   async returnRequest(id: number, managerComment = "", user: AuthenticatedUser) {
@@ -186,7 +228,19 @@ export class RequestsService {
     request.confirmedDamagedQuantity = 0
     await this.applyReturnRatingRule(request, user)
 
-    return this.requestsRepository.save(request)
+    const savedRequest = await this.requestsRepository.save(request)
+    await this.notificationsService.notifyCollaboratorEmail(
+      request.collaborator?.email,
+      {
+        title: "Return confirmed",
+        message: `Your return for ${request.part?.name || "a part"} was confirmed.`,
+        type: NotificationType.ReturnConfirmed,
+        targetPage: "My Requests",
+        targetSection: "MyPartRequests",
+        targetId: request.id,
+      }
+    )
+    return savedRequest
   }
 
   async declareReturn(
@@ -223,7 +277,20 @@ export class RequestsService {
     request.returnDamagedQuantity = input.damagedQuantity
     request.returnComment = input.comment?.trim() || ""
 
-    return this.requestsRepository.save(request)
+    const savedRequest = await this.requestsRepository.save(request)
+    await this.notificationsService.notifyManagersAndAdmins(
+      request.collaborator.division,
+      {
+        title: "Return confirmation required",
+        message: `${request.collaborator.name} declared ${request.part?.name || "a part"} returned.`,
+        type: NotificationType.ReturnDeclared,
+        targetPage: "Requests",
+        targetSection: "PartRequests",
+        targetId: request.id,
+        isActionable: true,
+      }
+    )
+    return savedRequest
   }
 
   async confirmReturn(
@@ -269,7 +336,20 @@ export class RequestsService {
 
     await this.applyReturnRatingRule(request, user)
 
-    return this.requestsRepository.save(request)
+    const savedRequest = await this.requestsRepository.save(request)
+    await this.notificationsService.resolveActionable("Requests", request.id)
+    await this.notificationsService.notifyCollaboratorEmail(
+      request.collaborator?.email,
+      {
+        title: "Return confirmed",
+        message: `Your return for ${request.part?.name || "a part"} was confirmed${input.confirmedDamagedQuantity > 0 ? " with damaged items" : ""}.`,
+        type: NotificationType.ReturnConfirmed,
+        targetPage: "My Requests",
+        targetSection: "MyPartRequests",
+        targetId: request.id,
+      }
+    )
+    return savedRequest
   }
 
   async markDamaged(id: number, managerComment = "", user: AuthenticatedUser) {
@@ -300,7 +380,8 @@ export class RequestsService {
       request.collaborator,
       -1,
       "Damaged return: -1",
-      user.email
+      user.email,
+      request.id
     )
 
     request.status = RequestStatus.Damaged
@@ -533,7 +614,8 @@ export class RequestsService {
       request.collaborator,
       penalty,
       reason,
-      user.email
+      user.email,
+      request.id
     )
   }
 
@@ -541,22 +623,36 @@ export class RequestsService {
     collaborator: Collaborator | undefined,
     delta: number,
     reason: string,
-    changedBy: string
+    changedBy: string,
+    requestId?: number
   ) {
     if (!collaborator) {
       return
     }
 
+    if (requestId) {
+      const existingHistory = await this.ratingHistoryRepository.findOne({
+        where: { requestId },
+      })
+      if (existingHistory) {
+        return
+      }
+    }
+
     const previousRating = collaborator.rating || 5
     const nextRating = Math.max(1, Math.min(5, previousRating + delta))
 
-    if (nextRating === previousRating) {
+    if (nextRating === previousRating && !requestId) {
       return
     }
 
-    collaborator.rating = nextRating
-    await this.collaboratorsRepository.save(collaborator)
+    if (nextRating !== previousRating) {
+      collaborator.rating = nextRating
+      await this.collaboratorsRepository.save(collaborator)
+    }
+
     await this.ratingHistoryRepository.save({
+      requestId: requestId || null,
       collaboratorId: collaborator.id,
       previousRating,
       newRating: nextRating,

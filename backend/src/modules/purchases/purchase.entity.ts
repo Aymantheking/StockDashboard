@@ -90,6 +90,9 @@ export class Purchase {
   @Column({ default: "", type: "text" })
   adminComment: string
 
+  @Column({ nullable: true, type: "timestamp" })
+  lastReminderAt: Date | null
+
   @CreateDateColumn()
   createdAt: Date
 

@@ -13,6 +13,8 @@ import {
   Division,
 } from "../collaborators/collaborator.entity"
 import { RequestStatus } from "../requests/part-request.entity"
+import { NotificationType } from "../notifications/notification.entity"
+import { NotificationsService } from "../notifications/notifications.service"
 import { UserRole } from "../users/user.entity"
 import { MissingItemRequest } from "./missing-item-request.entity"
 
@@ -33,7 +35,8 @@ export class MissingItemRequestsService {
     @InjectRepository(MissingItemRequest)
     private readonly missingItemRequestsRepository: Repository<MissingItemRequest>,
     @InjectRepository(Collaborator)
-    private readonly collaboratorsRepository: Repository<Collaborator>
+    private readonly collaboratorsRepository: Repository<Collaborator>,
+    private readonly notificationsService: NotificationsService
   ) {}
 
   async findAll(user: AuthenticatedUser) {
@@ -76,7 +79,20 @@ export class MissingItemRequestsService {
       managerComment: "",
     })
 
-    return this.missingItemRequestsRepository.save(request)
+    const savedRequest = await this.missingItemRequestsRepository.save(request)
+    await this.notificationsService.notifyManagersAndAdmins(
+      collaborator.division,
+      {
+        title: "New missing item request",
+        message: `${collaborator.name} requested ${savedRequest.itemName}.`,
+        type: NotificationType.MissingItemRequestCreated,
+        targetPage: "Requests",
+        targetSection: "MissingItemRequests",
+        targetId: savedRequest.id,
+        isActionable: true,
+      }
+    )
+    return savedRequest
   }
 
   async approve(id: number, managerComment = "", user: AuthenticatedUser) {
@@ -90,7 +106,20 @@ export class MissingItemRequestsService {
     request.status = RequestStatus.Approved
     request.managerComment = managerComment
 
-    return this.missingItemRequestsRepository.save(request)
+    const savedRequest = await this.missingItemRequestsRepository.save(request)
+    await this.notificationsService.resolveActionable("Requests", request.id)
+    await this.notificationsService.notifyCollaboratorEmail(
+      request.collaborator?.email,
+      {
+        title: "Missing item request approved",
+        message: `Your request for ${request.itemName} was approved.`,
+        type: NotificationType.MissingItemRequestApproved,
+        targetPage: "My Requests",
+        targetSection: "MyMissingItemRequests",
+        targetId: request.id,
+      }
+    )
+    return savedRequest
   }
 
   async reject(id: number, managerComment = "", user: AuthenticatedUser) {
@@ -104,7 +133,20 @@ export class MissingItemRequestsService {
     request.status = RequestStatus.Rejected
     request.managerComment = managerComment
 
-    return this.missingItemRequestsRepository.save(request)
+    const savedRequest = await this.missingItemRequestsRepository.save(request)
+    await this.notificationsService.resolveActionable("Requests", request.id)
+    await this.notificationsService.notifyCollaboratorEmail(
+      request.collaborator?.email,
+      {
+        title: "Missing item request rejected",
+        message: `Your request for ${request.itemName} was rejected.${managerComment ? ` ${managerComment}` : ""}`,
+        type: NotificationType.MissingItemRequestRejected,
+        targetPage: "My Requests",
+        targetSection: "MyMissingItemRequests",
+        targetId: request.id,
+      }
+    )
+    return savedRequest
   }
 
   private async findOne(id: number) {

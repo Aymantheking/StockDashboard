@@ -11,6 +11,8 @@ import { RatingHistory } from "./modules/collaborators/rating-history.entity"
 import { MissingItemRequest } from "./modules/missing-item-requests/missing-item-request.entity"
 import { MissingItemRequestsModule } from "./modules/missing-item-requests/missing-item-requests.module"
 import { NotificationsModule } from "./modules/notifications/notifications.module"
+import { Notification } from "./modules/notifications/notification.entity"
+import { NotificationSeen } from "./modules/notifications/notification-seen.entity"
 import { Part } from "./modules/parts/part.entity"
 import { PartsModule } from "./modules/parts/parts.module"
 import { Purchase } from "./modules/purchases/purchase.entity"
@@ -49,6 +51,8 @@ import { UsersModule } from "./modules/users/users.module"
           AppSetting,
           Purchase,
           Supplier,
+          Notification,
+          NotificationSeen,
         ],
         synchronize: process.env.NODE_ENV !== "production",
       }),

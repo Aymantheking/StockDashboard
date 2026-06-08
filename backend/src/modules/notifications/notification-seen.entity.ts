@@ -2,12 +2,12 @@ import {
   Column,
   CreateDateColumn,
   Entity,
+  Index,
   PrimaryGeneratedColumn,
-  Unique,
 } from "typeorm"
 
 @Entity("notification_seen")
-@Unique(["userId", "notificationId"])
+@Index(["userId", "notificationKey"], { unique: true })
 export class NotificationSeen {
   @PrimaryGeneratedColumn()
   id: number
@@ -15,9 +15,9 @@ export class NotificationSeen {
   @Column({ type: "int" })
   userId: number
 
-  @Column({ type: "varchar" })
-  notificationId: string
+  @Column({ type: "varchar", length: 255 })
+  notificationKey: string
 
   @CreateDateColumn()
-  seenAt: Date
+  createdAt: Date
 }

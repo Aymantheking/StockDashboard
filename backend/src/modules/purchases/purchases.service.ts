@@ -9,6 +9,8 @@ import { Repository } from "typeorm"
 import { AuthenticatedUser } from "../../common/authenticated-request"
 import { Division } from "../collaborators/collaborator.entity"
 import { Part } from "../parts/part.entity"
+import { NotificationType } from "../notifications/notification.entity"
+import { NotificationsService } from "../notifications/notifications.service"
 import { UserRole } from "../users/user.entity"
 import { Purchase, PurchasePriority, PurchaseStatus } from "./purchase.entity"
 
@@ -35,7 +37,8 @@ export class PurchasesService {
     @InjectRepository(Purchase)
     private readonly purchasesRepository: Repository<Purchase>,
     @InjectRepository(Part)
-    private readonly partsRepository: Repository<Part>
+    private readonly partsRepository: Repository<Part>,
+    private readonly notificationsService: NotificationsService
   ) {}
 
   async findAll(user: AuthenticatedUser) {
@@ -73,6 +76,9 @@ export class PurchasesService {
       .where("LOWER(purchase.itemName) = LOWER(:itemName)", { itemName })
       .andWhere("LOWER(purchase.reference) = LOWER(:reference)", { reference })
       .andWhere("purchase.division = :division", { division })
+      .andWhere("purchase.requestedById = :requestedById", {
+        requestedById: user.id,
+      })
       .andWhere("purchase.status = :status", {
         status: PurchaseStatus.Pending,
       })
@@ -96,7 +102,10 @@ export class PurchasesService {
         existingPendingPurchase.supplierContact = input.supplierContact.trim()
       }
 
-      return this.purchasesRepository.save(existingPendingPurchase)
+      const savedPurchase =
+        await this.purchasesRepository.save(existingPendingPurchase)
+      await this.notifyPurchaseCreated(savedPurchase, user)
+      return savedPurchase
     }
 
     const purchase = this.purchasesRepository.create({
@@ -119,7 +128,9 @@ export class PurchasesService {
       receivedDate: null,
     })
 
-    return this.purchasesRepository.save(purchase)
+    const savedPurchase = await this.purchasesRepository.save(purchase)
+    await this.notifyPurchaseCreated(savedPurchase, user)
+    return savedPurchase
   }
 
   async update(id: number, input: Partial<PurchaseInput>, user: AuthenticatedUser) {
@@ -151,7 +162,9 @@ export class PurchasesService {
     this.assertStatus(currentPurchase, PurchaseStatus.Approved, "order")
     const purchase = await this.update(id, input, user)
     purchase.status = PurchaseStatus.Ordered
-    return this.purchasesRepository.save(purchase)
+    const savedPurchase = await this.purchasesRepository.save(purchase)
+    await this.notifyRequester(savedPurchase, NotificationType.PurchaseRequestOrdered)
+    return savedPurchase
   }
 
   async approve(id: number, input: Partial<PurchaseInput>, user: AuthenticatedUser) {
@@ -159,7 +172,13 @@ export class PurchasesService {
     this.assertStatus(currentPurchase, PurchaseStatus.Pending, "approve")
     const purchase = await this.update(id, input, user)
     purchase.status = PurchaseStatus.Approved
-    return this.purchasesRepository.save(purchase)
+    const savedPurchase = await this.purchasesRepository.save(purchase)
+    await this.notificationsService.resolveActionable("Purchase", purchase.id)
+    await this.notifyRequester(
+      savedPurchase,
+      NotificationType.PurchaseRequestApproved
+    )
+    return savedPurchase
   }
 
   async markInTransit(
@@ -171,7 +190,12 @@ export class PurchasesService {
     this.assertStatus(currentPurchase, PurchaseStatus.Ordered, "mark in transit")
     const purchase = await this.update(id, input, user)
     purchase.status = PurchaseStatus.InTransit
-    return this.purchasesRepository.save(purchase)
+    const savedPurchase = await this.purchasesRepository.save(purchase)
+    await this.notifyRequester(
+      savedPurchase,
+      NotificationType.PurchaseRequestInTransit
+    )
+    return savedPurchase
   }
 
   async receive(id: number, input: Partial<PurchaseInput>, user: AuthenticatedUser) {
@@ -213,7 +237,15 @@ export class PurchasesService {
 
     purchase.status = PurchaseStatus.Received
     purchase.receivedDate = new Date().toISOString().slice(0, 10)
-    return this.purchasesRepository.save(purchase)
+    const savedPurchase = await this.purchasesRepository.save(purchase)
+    await this.notifyRequester(
+      savedPurchase,
+      NotificationType.PurchaseRequestReceived
+    )
+    await this.notificationsService.notifyCollaboratorForReceivedPurchase(
+      savedPurchase
+    )
+    return savedPurchase
   }
 
   async cancel(id: number, input: { adminComment?: string }, user: AuthenticatedUser) {
@@ -329,5 +361,31 @@ export class PurchasesService {
   private syncLegacyPartFields(part: Part) {
     part.quantity = part.availableQuantity
     part.status = part.availableQuantity > 0 ? "Available" : "Not Available"
+  }
+
+  private notifyPurchaseCreated(purchase: Purchase, user: AuthenticatedUser) {
+    return this.notificationsService.notifyAdmins(
+      {
+        title: "New purchase request",
+        message: `Purchase request for ${purchase.itemName} requires approval.`,
+        type: NotificationType.PurchaseRequestCreated,
+        targetPage: "Purchase",
+        targetSection: "PurchaseRequests",
+        targetId: purchase.id,
+        isActionable: true,
+      },
+      user.id
+    )
+  }
+
+  private notifyRequester(purchase: Purchase, type: NotificationType) {
+    return this.notificationsService.notifyUser(purchase.requestedById, {
+      title: `Purchase request ${purchase.status.toLowerCase()}`,
+      message: `${purchase.itemName} is now ${purchase.status.toLowerCase()}.`,
+      type,
+      targetPage: "Purchase",
+      targetSection: "PurchaseRequests",
+      targetId: purchase.id,
+    })
   }
 }

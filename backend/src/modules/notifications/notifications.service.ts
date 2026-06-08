@@ -11,6 +11,7 @@ import {
   User,
   UserRole,
 } from "../users/user.entity"
+import { NotificationSeen } from "./notification-seen.entity"
 
 type NotificationItem = {
   id: string
@@ -41,7 +42,9 @@ export class NotificationsService {
     @InjectRepository(Purchase)
     private readonly purchasesRepository: Repository<Purchase>,
     @InjectRepository(Collaborator)
-    private readonly collaboratorsRepository: Repository<Collaborator>
+    private readonly collaboratorsRepository: Repository<Collaborator>,
+    @InjectRepository(NotificationSeen)
+    private readonly notificationSeenRepository: Repository<NotificationSeen>
   ) {}
 
   async getSummary(user: AuthenticatedUser) {
@@ -54,6 +57,25 @@ export class NotificationsService {
     }
 
     return this.emptySummary([])
+  }
+
+  async markAllSeen(user: AuthenticatedUser) {
+    if (user.role !== UserRole.Collaborator) {
+      return this.getSummary(user)
+    }
+
+    const summary = await this.getCollaboratorSummary(user, false)
+    if (summary.items.length > 0) {
+      await this.notificationSeenRepository.upsert(
+        summary.items.map((item) => ({
+          userId: user.id,
+          notificationId: item.id,
+        })),
+        ["userId", "notificationId"]
+      )
+    }
+
+    return this.getCollaboratorSummary(user)
   }
 
   private async getManagerSummary(user: AuthenticatedUser) {
@@ -209,7 +231,10 @@ export class NotificationsService {
     }
   }
 
-  private async getCollaboratorSummary(user: AuthenticatedUser) {
+  private async getCollaboratorSummary(
+    user: AuthenticatedUser,
+    excludeSeen = true
+  ) {
     const collaborator = await this.collaboratorsRepository.findOne({
       where: { email: user.email },
     })
@@ -248,7 +273,7 @@ export class NotificationsService {
         actionableStatuses.includes(request.status) || Boolean(request.managerComment)
     )
 
-    const items: NotificationItem[] = [
+    let items: NotificationItem[] = [
       ...partUpdates.map((request) => ({
         id: `part-request-update-${request.id}-${request.status}`,
         type: "RequestUpdate" as const,
@@ -276,6 +301,14 @@ export class NotificationsService {
         new Date(b.createdAt || 0).getTime() -
         new Date(a.createdAt || 0).getTime()
     )
+
+    if (excludeSeen && items.length > 0) {
+      const seenItems = await this.notificationSeenRepository.find({
+        where: { userId: user.id },
+      })
+      const seenIds = new Set(seenItems.map((item) => item.notificationId))
+      items = items.filter((item) => !seenIds.has(item.id))
+    }
 
     return this.buildSummary({
       pendingUserVerifications: 0,

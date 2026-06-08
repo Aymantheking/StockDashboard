@@ -21,13 +21,13 @@ export class Reservation {
   @PrimaryGeneratedColumn()
   id: number
 
-  @Column()
+  @Column({ type: "int" })
   collaboratorId: number
 
-  @Column()
+  @Column({ type: "int" })
   partId: number
 
-  @Column()
+  @Column({ type: "int" })
   quantity: number
 
   @Column({ type: "date" })

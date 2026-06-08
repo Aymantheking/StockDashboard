@@ -13,7 +13,7 @@ export class RatingHistory {
   @PrimaryGeneratedColumn()
   id: number
 
-  @Column()
+  @Column({ type: "int" })
   collaboratorId: number
 
   @Column({ type: "float" })

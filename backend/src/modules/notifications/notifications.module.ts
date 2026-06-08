@@ -6,6 +6,7 @@ import { Purchase } from "../purchases/purchase.entity"
 import { PartRequest } from "../requests/part-request.entity"
 import { User } from "../users/user.entity"
 import { NotificationsController } from "./notifications.controller"
+import { NotificationSeen } from "./notification-seen.entity"
 import { NotificationsService } from "./notifications.service"
 
 @Module({
@@ -16,6 +17,7 @@ import { NotificationsService } from "./notifications.service"
       MissingItemRequest,
       Purchase,
       Collaborator,
+      NotificationSeen,
     ]),
   ],
   controllers: [NotificationsController],

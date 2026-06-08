@@ -25,22 +25,22 @@ export class Part {
   @Column()
   reference: string
 
-  @Column({ default: 0 })
+  @Column({ type: "int", default: 0 })
   totalQuantity: number
 
-  @Column({ default: 0 })
+  @Column({ type: "int", default: 0 })
   availableQuantity: number
 
-  @Column({ default: 0 })
+  @Column({ type: "int", default: 0 })
   reservedQuantity: number
 
-  @Column({ default: 0 })
+  @Column({ type: "int", default: 0 })
   borrowedQuantity: number
 
-  @Column({ default: 0 })
+  @Column({ type: "int", default: 0 })
   damagedQuantity: number
 
-  @Column({ default: 0 })
+  @Column({ type: "int", default: 0 })
   quantity: number
 
   @Column()

@@ -28,10 +28,10 @@ export class Purchase {
   @PrimaryGeneratedColumn()
   id: number
 
-  @Column()
+  @Column({ type: "varchar" })
   itemName: string
 
-  @Column()
+  @Column({ type: "varchar" })
   category: string
 
   @Column({ default: "" })
@@ -40,7 +40,7 @@ export class Purchase {
   @Column({ default: "" })
   reference: string
 
-  @Column()
+  @Column({ type: "int" })
   quantity: number
 
   @Column({ type: "text" })
@@ -60,7 +60,7 @@ export class Purchase {
   })
   status: PurchaseStatus
 
-  @Column()
+  @Column({ type: "int" })
   requestedById: number
 
   @Column({

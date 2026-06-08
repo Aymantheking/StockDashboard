@@ -1,4 +1,4 @@
-import { Controller, Get, Req, UseGuards } from "@nestjs/common"
+import { Controller, Get, Post, Req, UseGuards } from "@nestjs/common"
 import { AuthenticatedRequest } from "../../common/authenticated-request"
 import { Roles } from "../../common/roles.decorator"
 import { RolesGuard } from "../../common/roles.guard"
@@ -20,5 +20,16 @@ export class NotificationsController {
   @Get("summary")
   getSummary(@Req() request: AuthenticatedRequest) {
     return this.notificationsService.getSummary(request.user)
+  }
+
+  @Roles(
+    UserRole.Admin,
+    UserRole.InventoryManager,
+    UserRole.Collaborator,
+    UserRole.Viewer
+  )
+  @Post("mark-all-seen")
+  markAllSeen(@Req() request: AuthenticatedRequest) {
+    return this.notificationsService.markAllSeen(request.user)
   }
 }

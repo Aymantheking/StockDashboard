@@ -8,9 +8,11 @@ import {
 } from "../collaborators/collaborator.entity"
 import { Part } from "../parts/part.entity"
 import {
-  Reservation,
-  ReservationStatus,
-} from "../reservations/reservation.entity"
+  PartRequest,
+  RequestStatus,
+  RequestType,
+} from "../requests/part-request.entity"
+import { SettingsService } from "../settings/settings.service"
 
 @Injectable()
 export class AnalyticsService {
@@ -19,28 +21,34 @@ export class AnalyticsService {
     private readonly partsRepository: Repository<Part>,
     @InjectRepository(Collaborator)
     private readonly collaboratorsRepository: Repository<Collaborator>,
-    @InjectRepository(Reservation)
-    private readonly reservationsRepository: Repository<Reservation>
+    @InjectRepository(PartRequest)
+    private readonly requestsRepository: Repository<PartRequest>,
+    private readonly settingsService: SettingsService
   ) {}
 
   async getSummary() {
-    const [parts, collaborators, reservations] = await Promise.all([
+    const [parts, collaborators, requests, lowStockThreshold] = await Promise.all([
       this.partsRepository.find(),
       this.collaboratorsRepository.find(),
-      this.reservationsRepository.find({ relations: ["part", "collaborator"] }),
+      this.requestsRepository.find({ relations: ["part", "collaborator"] }),
+      this.settingsService.getLowStockThreshold(),
     ])
 
     const lowStockItems = parts.filter(
-      (part) => part.availableQuantity <= 5 && part.availableQuantity > 0
+      (part) =>
+        part.availableQuantity <= lowStockThreshold &&
+        part.availableQuantity > 0
     )
-    const borrowedReservations = reservations.filter(
-      (reservation) => reservation.status === ReservationStatus.Borrowed
+    const operationalRequests = requests.filter((request) =>
+      this.isOperationalRequest(request)
     )
-    const reservedReservations = reservations.filter(
-      (reservation) => reservation.status === ReservationStatus.Reserved
+    const reservedQuantity = this.sumStatusQuantity(
+      requests,
+      RequestStatus.Reserved
     )
-    const returnedReservations = reservations.filter(
-      (reservation) => reservation.status === ReservationStatus.Returned
+    const borrowedQuantity = this.sumStatusQuantity(
+      requests,
+      RequestStatus.Borrowed
     )
 
     return {
@@ -49,42 +57,57 @@ export class AnalyticsService {
         (total, part) => total + part.availableQuantity,
         0
       ),
-      borrowedParts: parts.reduce((total, part) => total + part.borrowedQuantity, 0),
-      reservedParts: parts.reduce((total, part) => total + part.reservedQuantity, 0),
+      borrowedParts: borrowedQuantity,
+      reservedParts: reservedQuantity,
+      damagedParts: parts.reduce(
+        (total, part) => total + part.damagedQuantity,
+        0
+      ),
       lowStockParts: lowStockItems.length,
       lowStockItems,
       totalCollaborators: collaborators.length,
-      activeBorrowers: this.getActiveBorrowers(collaborators, reservations),
-      totalReservations: reservations.length,
-      reservedReservations: reservedReservations.length,
-      borrowedReservations: borrowedReservations.length,
-      returnedReservations: returnedReservations.length,
-      mostBorrowedParts: this.getMostBorrowedParts(reservations),
+      activeBorrowers: this.getActiveBorrowers(collaborators, requests),
+      totalReservations: operationalRequests.length,
+      reservedReservations: this.countStatus(requests, RequestStatus.Reserved),
+      borrowedReservations: this.countStatus(requests, RequestStatus.Borrowed),
+      returnedReservations: this.countStatus(requests, RequestStatus.Returned),
+      damagedReservations: this.countStatus(requests, RequestStatus.Damaged),
+      pendingReservations: this.countStatus(requests, RequestStatus.Pending),
+      mostBorrowedParts: this.getMostBorrowedParts(operationalRequests),
       mostActiveCollaborators: this.getMostActiveCollaborators(
         collaborators,
-        reservations
+        operationalRequests
       ),
       inventoryByCategory: this.getInventoryByCategory(parts),
       reservationsByDivision: this.getReservationsByDivision(
         collaborators,
-        reservations
+        operationalRequests
       ),
       borrowedPartsByGroup: this.getBorrowedPartsByGroup(
         collaborators,
-        reservations
+        operationalRequests
       ),
     }
   }
 
-  private getMostBorrowedParts(reservations: Reservation[]) {
-    const counts = reservations.reduce<Record<string, number>>(
-      (partCounts, reservation) => {
-        const partName = reservation.part?.name || "Unknown part"
+  private countStatus(requests: PartRequest[], status: RequestStatus) {
+    return requests.filter((request) => request.status === status).length
+  }
+
+  private sumStatusQuantity(requests: PartRequest[], status: RequestStatus) {
+    return requests
+      .filter((request) => request.status === status)
+      .reduce((total, request) => total + request.quantity, 0)
+  }
+
+  private getMostBorrowedParts(requests: PartRequest[]) {
+    const counts = requests
+      .filter((request) => request.requestType === RequestType.Borrow)
+      .reduce<Record<string, number>>((partCounts, request) => {
+        const partName = request.part?.name || "Unknown part"
         partCounts[partName] = (partCounts[partName] || 0) + 1
         return partCounts
-      },
-      {}
-    )
+      }, {})
 
     return Object.entries(counts)
       .map(([partName, borrowCount]) => ({ partName, borrowCount }))
@@ -94,19 +117,19 @@ export class AnalyticsService {
 
   private getMostActiveCollaborators(
     collaborators: Collaborator[],
-    reservations: Reservation[]
+    requests: PartRequest[]
   ) {
     return collaborators
       .map((collaborator) => {
-        const collaboratorReservations = reservations.filter(
-          (reservation) => reservation.collaboratorId === collaborator.id
+        const collaboratorRequests = requests.filter(
+          (request) => request.collaboratorId === collaborator.id
         )
 
         return {
           collaboratorName: collaborator.name,
-          reservationCount: collaboratorReservations.length,
-          borrowedCount: collaboratorReservations.filter(
-            (reservation) => reservation.status === ReservationStatus.Borrowed
+          reservationCount: collaboratorRequests.length,
+          borrowedCount: collaboratorRequests.filter(
+            (request) => request.status === RequestStatus.Borrowed
           ).length,
         }
       })
@@ -128,68 +151,122 @@ export class AnalyticsService {
 
   private getReservationsByDivision(
     collaborators: Collaborator[],
-    reservations: Reservation[]
+    requests: PartRequest[]
   ) {
     return Object.values(Division).map((division) => {
       const divisionCollaboratorIds = collaborators
         .filter((collaborator) => collaborator.division === division)
         .map((collaborator) => collaborator.id)
-      const divisionReservations = reservations.filter((reservation) =>
-        divisionCollaboratorIds.includes(reservation.collaboratorId)
+      const divisionRequests = requests.filter((request) =>
+        divisionCollaboratorIds.includes(request.collaboratorId)
+      )
+      const reservedRequests = divisionRequests.filter(
+        (request) => request.status === RequestStatus.Reserved
+      )
+      const borrowedRequests = divisionRequests.filter(
+        (request) => request.status === RequestStatus.Borrowed
+      )
+      const returnedRequests = divisionRequests.filter(
+        (request) => request.status === RequestStatus.Returned
+      )
+      const damagedRequests = divisionRequests.filter(
+        (request) => request.status === RequestStatus.Damaged
       )
 
       return {
         division,
         collaborators: divisionCollaboratorIds.length,
-        reservationCount: divisionReservations.length,
-        activeReservations: divisionReservations.filter(
-          (reservation) => reservation.status !== ReservationStatus.Returned
-        ).length,
-        borrowedParts: divisionReservations.filter(
-          (reservation) => reservation.status === ReservationStatus.Borrowed
-        ).length,
+        reservationCount: reservedRequests.length + borrowedRequests.length,
+        activeReservations: reservedRequests.reduce(
+          (total, request) => total + request.quantity,
+          0
+        ),
+        borrowedParts: borrowedRequests.reduce(
+          (total, request) => total + request.quantity,
+          0
+        ),
+        returnedParts: returnedRequests.reduce(
+          (total, request) => total + request.quantity,
+          0
+        ),
+        damagedParts: damagedRequests.reduce(
+          (total, request) => total + request.quantity,
+          0
+        ),
       }
     })
   }
 
   private getBorrowedPartsByGroup(
     collaborators: Collaborator[],
-    reservations: Reservation[]
+    requests: PartRequest[]
   ) {
     return Object.values(CollaboratorGroup).map((group) => {
       const groupCollaboratorIds = collaborators
         .filter((collaborator) => collaborator.group === group)
         .map((collaborator) => collaborator.id)
-      const groupReservations = reservations.filter((reservation) =>
-        groupCollaboratorIds.includes(reservation.collaboratorId)
+      const groupRequests = requests.filter((request) =>
+        groupCollaboratorIds.includes(request.collaboratorId)
       )
-      const borrowedCount = groupReservations.filter(
-        (reservation) => reservation.status === ReservationStatus.Borrowed
-      ).length
+      const reservedRequests = groupRequests.filter(
+        (request) => request.status === RequestStatus.Reserved
+      )
+      const borrowedRequests = groupRequests.filter(
+        (request) => request.status === RequestStatus.Borrowed
+      )
+      const returnedRequests = groupRequests.filter(
+        (request) => request.status === RequestStatus.Returned
+      )
+      const damagedRequests = groupRequests.filter(
+        (request) => request.status === RequestStatus.Damaged
+      )
+      const borrowedParts = borrowedRequests.reduce(
+        (total, request) => total + request.quantity,
+        0
+      )
 
       return {
         group,
         collaborators: groupCollaboratorIds.length,
-        reservationCount: groupReservations.length,
-        activeReservations: groupReservations.filter(
-          (reservation) => reservation.status !== ReservationStatus.Returned
-        ).length,
-        borrowedCount,
-        borrowedParts: borrowedCount,
+        reservationCount: reservedRequests.length + borrowedRequests.length,
+        activeReservations: reservedRequests.reduce(
+          (total, request) => total + request.quantity,
+          0
+        ),
+        borrowedCount: borrowedRequests.length,
+        borrowedParts,
+        returnedParts: returnedRequests.reduce(
+          (total, request) => total + request.quantity,
+          0
+        ),
+        damagedParts: damagedRequests.reduce(
+          (total, request) => total + request.quantity,
+          0
+        ),
       }
     })
   }
 
   private getActiveBorrowers(
     collaborators: Collaborator[],
-    reservations: Reservation[]
+    requests: PartRequest[]
   ) {
     return collaborators.filter((collaborator) =>
-      reservations.some(
-        (reservation) =>
-          reservation.collaboratorId === collaborator.id &&
-          reservation.status === ReservationStatus.Borrowed
+      requests.some(
+        (request) =>
+          request.collaboratorId === collaborator.id &&
+          request.status === RequestStatus.Borrowed
       )
     ).length
+  }
+
+  private isOperationalRequest(request: PartRequest) {
+    return [
+      RequestStatus.Reserved,
+      RequestStatus.Borrowed,
+      RequestStatus.ReturnPending,
+      RequestStatus.Returned,
+      RequestStatus.Damaged,
+    ].includes(request.status)
   }
 }

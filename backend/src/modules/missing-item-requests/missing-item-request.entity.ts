@@ -18,7 +18,7 @@ export class MissingItemRequest {
   @Column()
   collaboratorId: number
 
-  @Column({ nullable: true })
+  @Column({ nullable: true, type: "int" })
   partId: number | null
 
   @Column()
@@ -27,7 +27,7 @@ export class MissingItemRequest {
   @Column()
   category: string
 
-  @Column({ nullable: true })
+  @Column({ nullable: true, type: "text" })
   manufacturer: string
 
   @Column({ nullable: true })

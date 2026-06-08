@@ -32,13 +32,13 @@ export class PartRequest {
   @PrimaryGeneratedColumn()
   id: number
 
-  @Column()
+  @Column({ type: "int" })
   collaboratorId: number
 
-  @Column()
+  @Column({ type: "int" })
   partId: number
 
-  @Column()
+  @Column({ type: "int" })
   quantity: number
 
   @Column({ type: "enum", enum: RequestType })
@@ -68,10 +68,10 @@ export class PartRequest {
   @Column({ nullable: true, type: "timestamp" })
   returnDeclaredAt: Date | null
 
-  @Column({ nullable: true })
+  @Column({ nullable: true, type: "int" })
   returnGoodQuantity: number | null
 
-  @Column({ nullable: true })
+  @Column({ nullable: true, type: "int" })
   returnDamagedQuantity: number | null
 
   @Column({ nullable: true, type: "text" })
@@ -80,10 +80,10 @@ export class PartRequest {
   @Column({ nullable: true, type: "timestamp" })
   returnConfirmedAt: Date | null
 
-  @Column({ nullable: true })
+  @Column({ nullable: true, type: "int" })
   confirmedGoodQuantity: number | null
 
-  @Column({ nullable: true })
+  @Column({ nullable: true, type: "int" })
   confirmedDamagedQuantity: number | null
 
   @Column({ nullable: true, type: "text" })

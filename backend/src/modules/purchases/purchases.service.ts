@@ -62,20 +62,53 @@ export class PurchasesService {
 
   async create(input: PurchaseInput, user: AuthenticatedUser) {
     this.validateInput(input)
+    const itemName = input.itemName.trim()
+    const reference = input.reference?.trim() || ""
+    const division =
+      user.role === UserRole.Admin
+        ? input.division || Division.Admin
+        : this.getManagerDivision(user)
+    const existingPendingPurchase = await this.purchasesRepository
+      .createQueryBuilder("purchase")
+      .where("LOWER(purchase.itemName) = LOWER(:itemName)", { itemName })
+      .andWhere("LOWER(purchase.reference) = LOWER(:reference)", { reference })
+      .andWhere("purchase.division = :division", { division })
+      .andWhere("purchase.status = :status", {
+        status: PurchaseStatus.Pending,
+      })
+      .getOne()
+
+    if (existingPendingPurchase) {
+      existingPendingPurchase.quantity += input.quantity
+      existingPendingPurchase.reason = this.mergeReason(
+        existingPendingPurchase.reason,
+        input.reason.trim()
+      )
+      existingPendingPurchase.totalPrice =
+        existingPendingPurchase.unitPrice > 0
+          ? existingPendingPurchase.unitPrice * existingPendingPurchase.quantity
+          : existingPendingPurchase.totalPrice + Number(input.totalPrice || 0)
+
+      if (input.supplierName?.trim()) {
+        existingPendingPurchase.supplierName = input.supplierName.trim()
+      }
+      if (input.supplierContact?.trim()) {
+        existingPendingPurchase.supplierContact = input.supplierContact.trim()
+      }
+
+      return this.purchasesRepository.save(existingPendingPurchase)
+    }
 
     const purchase = this.purchasesRepository.create({
-      itemName: input.itemName.trim(),
+      itemName,
       category: input.category.trim(),
       manufacturer: input.manufacturer?.trim() || "",
-      reference: input.reference?.trim() || "",
+      reference,
       quantity: input.quantity,
       reason: input.reason.trim(),
       priority: input.priority,
       requestedById: user.id,
-      division:
-        user.role === UserRole.Admin
-          ? input.division || Division.Admin
-          : this.getManagerDivision(user),
+      division,
       supplierName: input.supplierName?.trim() || "",
       supplierContact: input.supplierContact?.trim() || "",
       unitPrice: Number(input.unitPrice || 0),
@@ -114,12 +147,16 @@ export class PurchasesService {
   }
 
   async markOrdered(id: number, input: Partial<PurchaseInput>, user: AuthenticatedUser) {
+    const currentPurchase = await this.findOne(id, user)
+    this.assertStatus(currentPurchase, PurchaseStatus.Approved, "order")
     const purchase = await this.update(id, input, user)
     purchase.status = PurchaseStatus.Ordered
     return this.purchasesRepository.save(purchase)
   }
 
   async approve(id: number, input: Partial<PurchaseInput>, user: AuthenticatedUser) {
+    const currentPurchase = await this.findOne(id, user)
+    this.assertStatus(currentPurchase, PurchaseStatus.Pending, "approve")
     const purchase = await this.update(id, input, user)
     purchase.status = PurchaseStatus.Approved
     return this.purchasesRepository.save(purchase)
@@ -130,17 +167,17 @@ export class PurchasesService {
     input: Partial<PurchaseInput>,
     user: AuthenticatedUser
   ) {
+    const currentPurchase = await this.findOne(id, user)
+    this.assertStatus(currentPurchase, PurchaseStatus.Ordered, "mark in transit")
     const purchase = await this.update(id, input, user)
     purchase.status = PurchaseStatus.InTransit
     return this.purchasesRepository.save(purchase)
   }
 
   async receive(id: number, input: Partial<PurchaseInput>, user: AuthenticatedUser) {
+    const currentPurchase = await this.findOne(id, user)
+    this.assertStatus(currentPurchase, PurchaseStatus.InTransit, "receive")
     const purchase = await this.update(id, input, user)
-
-    if (purchase.status === PurchaseStatus.Received) {
-      throw new BadRequestException("purchase has already been received")
-    }
 
     const existingPart = purchase.reference
       ? await this.partsRepository.findOne({
@@ -182,6 +219,15 @@ export class PurchasesService {
   async cancel(id: number, input: { adminComment?: string }, user: AuthenticatedUser) {
     const purchase = await this.findOne(id, user)
     this.assertCanManagePurchase(purchase, user)
+
+    if (
+      purchase.status === PurchaseStatus.Received ||
+      purchase.status === PurchaseStatus.Cancelled
+    ) {
+      throw new BadRequestException(
+        `Cannot cancel a ${purchase.status.toLowerCase()} purchase`
+      )
+    }
 
     purchase.status = PurchaseStatus.Cancelled
     purchase.adminComment = input.adminComment || purchase.adminComment
@@ -258,6 +304,26 @@ export class PurchasesService {
 
   private assertCanManagePurchase(purchase: Purchase, user: AuthenticatedUser) {
     this.assertCanView(purchase, user)
+  }
+
+  private assertStatus(
+    purchase: Purchase,
+    expectedStatus: PurchaseStatus,
+    action: string
+  ) {
+    if (purchase.status !== expectedStatus) {
+      throw new BadRequestException(
+        `Cannot ${action} a purchase with status ${purchase.status}`
+      )
+    }
+  }
+
+  private mergeReason(existingReason: string, newReason: string) {
+    if (!newReason || existingReason.includes(newReason)) {
+      return existingReason
+    }
+
+    return `${existingReason}\n${newReason}`
   }
 
   private syncLegacyPartFields(part: Part) {

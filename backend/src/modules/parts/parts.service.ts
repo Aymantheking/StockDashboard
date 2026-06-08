@@ -82,7 +82,7 @@ export class PartsService implements OnModuleInit {
   }
 
   async findAll() {
-    const parts = await this.partsRepository.find({ order: { id: "ASC" } })
+    const parts = await this.partsRepository.find({ order: { name: "ASC" } })
     return this.withCalculatedStatuses(parts)
   }
 

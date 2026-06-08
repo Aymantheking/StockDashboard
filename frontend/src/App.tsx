@@ -1,18 +1,32 @@
-import { useEffect, useState } from "react"
+import { useEffect, useRef, useState } from "react"
 import {
   BarChart3,
   Boxes,
   CalendarCheck,
+  CheckCircle,
   ChevronDown,
   ChevronRight,
+  CircleAlert,
+  ClipboardCheck,
+  Download,
+  Eye,
+  FileText,
+  FilePlus2,
   Inbox,
   LayoutDashboard,
   Package,
+  Pencil,
+  RotateCcw,
   Settings,
   ShoppingCart,
+  Trash2,
   Truck,
+  UserRoundSearch,
   Users,
+  XCircle,
 } from "lucide-react"
+import { jsPDF } from "jspdf"
+import autoTable from "jspdf-autotable"
 import {
   Bar,
   BarChart,
@@ -152,12 +166,12 @@ type Supplier = {
 type NotificationItemSummary = {
   id: string
   type:
-    | "UserVerification"
-    | "PartRequest"
-    | "MissingItemRequest"
-    | "PurchaseRequest"
-    | "ReturnConfirmation"
-    | "RequestUpdate"
+  | "UserVerification"
+  | "PartRequest"
+  | "MissingItemRequest"
+  | "PurchaseRequest"
+  | "ReturnConfirmation"
+  | "RequestUpdate"
   title: string
   description: string
   targetPage: string
@@ -217,6 +231,8 @@ type PartRequest = {
   confirmedGoodQuantity?: number | null
   confirmedDamagedQuantity?: number | null
   returnManagerComment?: string | null
+  createdAt?: string
+  updatedAt?: string
   collaborator?: Collaborator
   part?: Part
 }
@@ -234,6 +250,8 @@ type MissingItemRequest = {
   neededDate: string
   status: RequestStatus
   managerComment: string
+  createdAt?: string
+  updatedAt?: string
   collaborator?: Collaborator
 }
 
@@ -242,6 +260,7 @@ type AnalyticsSummary = {
   availableParts: number
   borrowedParts: number
   reservedParts: number
+  damagedParts?: number
   lowStockParts: number
   lowStockItems: Part[]
   totalCollaborators: number
@@ -263,6 +282,8 @@ type AnalyticsSummary = {
     reservationCount: number
     activeReservations: number
     borrowedParts: number
+    returnedParts?: number
+    damagedParts?: number
   }[]
   borrowedPartsByGroup: {
     group: CollaboratorGroup
@@ -271,6 +292,8 @@ type AnalyticsSummary = {
     activeReservations: number
     borrowedCount: number
     borrowedParts: number
+    returnedParts?: number
+    damagedParts?: number
   }[]
 }
 
@@ -302,6 +325,9 @@ const SETTINGS_API_URL = "http://localhost:3001/settings"
 const PURCHASES_API_URL = "http://localhost:3001/purchases"
 const SUPPLIERS_API_URL = "http://localhost:3001/suppliers"
 const NOTIFICATIONS_API_URL = "http://localhost:3001/notifications/summary"
+const NOTIFICATIONS_MARK_SEEN_API_URL =
+  "http://localhost:3001/notifications/mark-all-seen"
+const PAGE_SIZE = 10
 
 function getTodayDate() {
   return new Date().toISOString().slice(0, 10)
@@ -309,6 +335,109 @@ function getTodayDate() {
 
 function isPastDate(value?: string | null) {
   return Boolean(value && value < getTodayDate())
+}
+
+function withoutSupplierName(contact: string, supplierName: string) {
+  const normalizedContact = contact.trim()
+  const normalizedName = supplierName.trim()
+
+  if (
+    normalizedName &&
+    normalizedContact.toLowerCase().startsWith(normalizedName.toLowerCase())
+  ) {
+    return normalizedContact
+      .slice(normalizedName.length)
+      .replace(/^\s*\/\s*/, "")
+      .trim()
+  }
+
+  return normalizedContact
+}
+
+function getPageItems<T>(items: T[], page: number) {
+  const totalPages = Math.max(1, Math.ceil(items.length / PAGE_SIZE))
+  const safePage = Math.min(Math.max(page, 1), totalPages)
+  const start = (safePage - 1) * PAGE_SIZE
+
+  return {
+    items: items.slice(start, start + PAGE_SIZE),
+    page: safePage,
+    totalPages,
+    total: items.length,
+    start: items.length === 0 ? 0 : start + 1,
+    end: Math.min(start + PAGE_SIZE, items.length),
+  }
+}
+
+async function loadLogoDataUrl() {
+  const response = await fetch("/black.png")
+  const blob = await response.blob()
+
+  return new Promise<string>((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => resolve(String(reader.result))
+    reader.onerror = reject
+    reader.readAsDataURL(blob)
+  })
+}
+
+async function captureChartDataUrl(elementId: string) {
+  const container = document.getElementById(elementId)
+  const svg = container?.querySelector("svg")
+
+  if (!svg) {
+    throw new Error(`Chart ${elementId} is not available`)
+  }
+
+  const bounds = svg.getBoundingClientRect()
+  const width = Math.max(640, Math.ceil(bounds.width || 640))
+  const height = Math.max(300, Math.ceil(bounds.height || 300))
+  const exportSvg = svg.cloneNode(true) as SVGSVGElement
+  exportSvg.setAttribute("xmlns", "http://www.w3.org/2000/svg")
+  exportSvg.setAttribute("width", String(width))
+  exportSvg.setAttribute("height", String(height))
+  exportSvg.setAttribute("viewBox", `0 0 ${width} ${height}`)
+  const serializedSvg = new XMLSerializer().serializeToString(exportSvg)
+  const blob = new Blob([serializedSvg], {
+    type: "image/svg+xml;charset=utf-8",
+  })
+  const objectUrl = URL.createObjectURL(blob)
+
+  try {
+    const image = await new Promise<HTMLImageElement>((resolve, reject) => {
+      const nextImage = new Image()
+      nextImage.onload = () => resolve(nextImage)
+      nextImage.onerror = () => reject(new Error(`Failed to render ${elementId}`))
+      nextImage.src = objectUrl
+    })
+    const canvas = document.createElement("canvas")
+    canvas.width = width * 2
+    canvas.height = height * 2
+    const context = canvas.getContext("2d")
+
+    if (!context) {
+      throw new Error("Canvas is unavailable")
+    }
+
+    context.scale(2, 2)
+    context.fillStyle = "#ffffff"
+    context.fillRect(0, 0, width, height)
+    context.drawImage(image, 0, 0, width, height)
+    return canvas.toDataURL("image/png")
+  } finally {
+    URL.revokeObjectURL(objectUrl)
+  }
+}
+
+function addPdfFooter(doc: jsPDF) {
+  const pageCount = doc.getNumberOfPages()
+  for (let page = 1; page <= pageCount; page += 1) {
+    doc.setPage(page)
+    doc.setFontSize(8)
+    doc.setTextColor(100)
+    doc.text("Generated by StockDashboard", 14, 287)
+    doc.text(`Page ${page} of ${pageCount}`, 196, 287, { align: "right" })
+  }
 }
 
 function emptyNotificationSummary(): NotificationSummary {
@@ -372,7 +501,7 @@ function normalizePart(part: Part): Part {
   const damagedQuantity = Number(part.damagedQuantity ?? 0)
   const totalQuantity = Number(
     part.totalQuantity ??
-      availableQuantity + reservedQuantity + borrowedQuantity + damagedQuantity
+    availableQuantity + reservedQuantity + borrowedQuantity + damagedQuantity
   )
 
   return {
@@ -738,6 +867,24 @@ function App() {
     }
   }
 
+  async function markAllNotificationsSeen() {
+    try {
+      const response = await apiFetch(NOTIFICATIONS_MARK_SEEN_API_URL, {
+        method: "POST",
+      })
+
+      if (!response.ok) {
+        throw new Error("Failed to mark notifications as seen")
+      }
+
+      setNotificationSummary(
+        normalizeNotificationSummary((await response.json()) as NotificationSummary)
+      )
+    } catch {
+      await loadNotificationSummary()
+    }
+  }
+
   useEffect(() => {
     if (!authToken || !currentUser) {
       return
@@ -805,17 +952,17 @@ function App() {
       const targetElement =
         item.targetId !== undefined
           ? document.getElementById(
-              `${item.targetSection || item.targetPage}-${item.targetId}`
-            )
+            `${item.targetSection || item.targetPage}-${item.targetId}`
+          )
           : null
       const sectionElement = item.targetSection
         ? document.getElementById(item.targetSection)
         : document.getElementById(item.targetPage)
 
-      ;(targetElement || sectionElement)?.scrollIntoView({
-        behavior: "smooth",
-        block: "center",
-      })
+        ; (targetElement || sectionElement)?.scrollIntoView({
+          behavior: "smooth",
+          block: "center",
+        })
     }, 100)
   }
 
@@ -859,6 +1006,7 @@ function App() {
             <NotificationDropdown
               summary={notificationSummary}
               onNavigate={handleNotificationNavigate}
+              onMarkAllSeen={markAllNotificationsSeen}
             />
           )}
 
@@ -897,9 +1045,15 @@ function App() {
               parts={parts}
               reservations={reservations}
               collaborators={collaborators}
+              currentUser={currentUser}
+              users={users}
+              partRequests={partRequests}
+              purchases={purchases}
+              notificationSummary={notificationSummary}
               analyticsSummary={analyticsSummary}
               isLoadingAnalytics={isLoadingAnalytics}
               analyticsError={analyticsError}
+              lowStockThreshold={appSettings.lowStockThreshold}
             />
           )}
           {activeVisiblePage === "Inventory" && (
@@ -972,6 +1126,14 @@ function App() {
               analyticsSummary={analyticsSummary}
               isLoadingAnalytics={isLoadingAnalytics}
               analyticsError={analyticsError}
+              currentUser={currentUser}
+              parts={parts}
+              partRequests={partRequests}
+              missingItemRequests={missingItemRequests}
+              purchases={purchases}
+              collaborators={collaborators}
+              users={users}
+              lowStockThreshold={appSettings.lowStockThreshold}
             />
           )}
           {activeVisiblePage === "Requests" && (
@@ -1123,19 +1285,18 @@ function SidebarNavigation({
               const PageIcon = pageIcons[page] || section.icon
 
               return (
-            <button
-              key={page}
-              onClick={() => onNavigate(page)}
-              className={`flex w-full items-center gap-3 rounded px-3 py-3 text-left transition ${
-                activePage === page
-                  ? "bg-yellow-400 font-semibold text-black"
-                  : "hover:bg-gray-800 hover:text-yellow-400"
-              }`}
-            >
-              <PageIcon className="h-5 w-5 shrink-0" />
-              <span>{page}</span>
-              <SidebarBadge count={badgeCounts[page] || 0} />
-            </button>
+                <button
+                  key={page}
+                  onClick={() => onNavigate(page)}
+                  className={`flex w-full items-center gap-3 rounded px-3 py-3 text-left transition ${activePage === page
+                    ? "bg-yellow-400 font-semibold text-black"
+                    : "hover:bg-gray-800 hover:text-yellow-400"
+                    }`}
+                >
+                  <PageIcon className="h-5 w-5 shrink-0" />
+                  <span>{page}</span>
+                  <SidebarBadge count={badgeCounts[page] || 0} />
+                </button>
               )
             })()
           ))
@@ -1152,11 +1313,10 @@ function SidebarNavigation({
                   [section.title]: !openSections[section.title],
                 })
               }
-              className={`flex w-full items-center justify-between rounded px-3 py-3 text-left transition ${
-                hasActiveChild
-                  ? "text-yellow-400"
-                  : "hover:bg-gray-800 hover:text-yellow-400"
-              }`}
+              className={`flex w-full items-center justify-between rounded px-3 py-3 text-left transition ${hasActiveChild
+                ? "text-yellow-400"
+                : "hover:bg-gray-800 hover:text-yellow-400"
+                }`}
             >
               <span className="flex items-center gap-3 font-semibold">
                 <SectionIcon className="h-5 w-5 shrink-0" />
@@ -1179,11 +1339,10 @@ function SidebarNavigation({
                       <button
                         key={page}
                         onClick={() => onNavigate(page)}
-                        className={`flex w-full items-center gap-3 rounded px-3 py-2 text-left text-sm transition ${
-                          activePage === page
-                            ? "bg-yellow-400 font-semibold text-black"
-                            : "text-gray-300 hover:bg-gray-800 hover:text-yellow-400"
-                        }`}
+                        className={`flex w-full items-center gap-3 rounded px-3 py-2 text-left text-sm transition ${activePage === page
+                          ? "bg-yellow-400 font-semibold text-black"
+                          : "text-gray-300 hover:bg-gray-800 hover:text-yellow-400"
+                          }`}
                       >
                         <PageIcon className="h-5 w-5 shrink-0" />
                         <span>{page}</span>
@@ -1221,7 +1380,6 @@ function getSidebarBadgeCounts(summary: NotificationSummary) {
     counts.pendingReturnConfirmations
 
   return {
-    Inventory: requestsCount,
     Requests: requestsCount,
     Settings: counts.pendingUserVerifications,
     Purchase: counts.pendingPurchaseRequests,
@@ -1332,10 +1490,10 @@ function LoginPage({
       const response = await fetch(
         `${AUTH_API_URL}/${mode === "login" ? "login" : "register"}`,
         {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
           body: JSON.stringify(
             mode === "login"
               ? { email, password }
@@ -1352,7 +1510,7 @@ function LoginPage({
       if (!authResponse.accessToken) {
         setAuthError(
           authResponse.message ||
-            "Your account was created. Please wait for administrator verification."
+          "Your account was created. Please wait for administrator verification."
         )
         setMode("login")
         return
@@ -1408,160 +1566,160 @@ function LoginPage({
           </div>
         </section>
 
-      <div className="w-full max-w-md p-8 lg:mx-auto lg:self-center">
-        <div className="flex items-center justify-between mb-8">
-          <div>
-            <h1 className="text-2xl font-bold">Stock Dashboard</h1>
-            <p className="text-sm text-gray-500">
-              {mode === "login" ? "Local access" : "Create collaborator account"}
-            </p>
-          </div>
-
-          <img
-            src="/logo.png"
-            alt="Bertrandt"
-            className="h-12 w-auto object-contain"
-          />
-        </div>
-
-        {authError && (
-          <div className="mb-5 rounded border border-red-200 bg-red-50 px-4 py-3 text-red-700">
-            {authError}
-          </div>
-        )}
-
-        <form onSubmit={handleSubmit} className="space-y-4">
-          {mode === "signup" && (
+        <div className="w-full max-w-md p-8 lg:mx-auto lg:self-center">
+          <div className="flex items-center justify-between mb-8">
             <div>
-              <label className="block text-sm font-semibold mb-2">Name</label>
+              <h1 className="text-2xl font-bold">Stock Dashboard</h1>
+              <p className="text-sm text-gray-500">
+                {mode === "login" ? "Local access" : "Create collaborator account"}
+              </p>
+            </div>
+
+            <img
+              src="/logo.png"
+              alt="Bertrandt"
+              className="h-12 w-auto object-contain"
+            />
+          </div>
+
+          {authError && (
+            <div className="mb-5 rounded border border-red-200 bg-red-50 px-4 py-3 text-red-700">
+              {authError}
+            </div>
+          )}
+
+          <form onSubmit={handleSubmit} className="space-y-4">
+            {mode === "signup" && (
+              <div>
+                <label className="block text-sm font-semibold mb-2">Name</label>
+                <input
+                  value={name}
+                  onChange={(event) => setName(event.target.value)}
+                  className="w-full rounded border border-gray-300 px-4 py-2"
+                  required
+                />
+              </div>
+            )}
+
+            <div>
+              <label className="block text-sm font-semibold mb-2">Email</label>
               <input
-                value={name}
-                onChange={(event) => setName(event.target.value)}
+                type="email"
+                value={email}
+                onChange={(event) => setEmail(event.target.value)}
                 className="w-full rounded border border-gray-300 px-4 py-2"
                 required
               />
             </div>
-          )}
 
-          <div>
-            <label className="block text-sm font-semibold mb-2">Email</label>
-            <input
-              type="email"
-              value={email}
-              onChange={(event) => setEmail(event.target.value)}
-              className="w-full rounded border border-gray-300 px-4 py-2"
-              required
-            />
-          </div>
+            <div>
+              <label className="block text-sm font-semibold mb-2">Password</label>
+              <PasswordInput
+                value={password}
+                onChange={setPassword}
+                isVisible={showPassword}
+                onToggleVisibility={() => setShowPassword(!showPassword)}
+              />
+            </div>
 
-          <div>
-            <label className="block text-sm font-semibold mb-2">Password</label>
-            <PasswordInput
-              value={password}
-              onChange={setPassword}
-              isVisible={showPassword}
-              onToggleVisibility={() => setShowPassword(!showPassword)}
-            />
-          </div>
+            {mode === "signup" && (
+              <>
+                <div>
+                  <label className="block text-sm font-semibold mb-2">
+                    Confirm Password
+                  </label>
+                  <PasswordInput
+                    value={confirmPassword}
+                    onChange={setConfirmPassword}
+                    isVisible={showConfirmPassword}
+                    onToggleVisibility={() =>
+                      setShowConfirmPassword(!showConfirmPassword)
+                    }
+                  />
+                </div>
 
-          {mode === "signup" && (
-            <>
-              <div>
-                <label className="block text-sm font-semibold mb-2">
-                  Confirm Password
-                </label>
-                <PasswordInput
-                  value={confirmPassword}
-                  onChange={setConfirmPassword}
-                  isVisible={showConfirmPassword}
-                  onToggleVisibility={() =>
-                    setShowConfirmPassword(!showConfirmPassword)
-                  }
-                />
-              </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <select
+                    value={division}
+                    onChange={(event) =>
+                      setDivision(event.target.value as Division)
+                    }
+                    className="w-full rounded border border-gray-300 px-4 py-2"
+                  >
+                    {divisions
+                      .filter((divisionName) => divisionName !== "Admin")
+                      .map((divisionName) => (
+                        <option key={divisionName}>{divisionName}</option>
+                      ))}
+                  </select>
 
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <select
-                  value={division}
-                  onChange={(event) =>
-                    setDivision(event.target.value as Division)
-                  }
-                  className="w-full rounded border border-gray-300 px-4 py-2"
-                >
-                  {divisions
-                    .filter((divisionName) => divisionName !== "Admin")
-                    .map((divisionName) => (
-                      <option key={divisionName}>{divisionName}</option>
+                  <select
+                    value={group}
+                    onChange={(event) =>
+                      setGroup(event.target.value as CollaboratorGroup)
+                    }
+                    className="w-full rounded border border-gray-300 px-4 py-2"
+                  >
+                    {collaboratorGroups.map((groupName) => (
+                      <option key={groupName}>{groupName}</option>
                     ))}
-                </select>
+                  </select>
+                </div>
+              </>
+            )}
 
-                <select
-                  value={group}
-                  onChange={(event) =>
-                    setGroup(event.target.value as CollaboratorGroup)
-                  }
-                  className="w-full rounded border border-gray-300 px-4 py-2"
-                >
-                  {collaboratorGroups.map((groupName) => (
-                    <option key={groupName}>{groupName}</option>
-                  ))}
-                </select>
-              </div>
-            </>
-          )}
+            {mode === "login" && (
+              <label className="inline-flex items-center gap-2 text-sm text-gray-600">
+                <input type="checkbox" className="rounded border-gray-300" />
+                Remember me
+              </label>
+            )}
 
-          {mode === "login" && (
-            <label className="inline-flex items-center gap-2 text-sm text-gray-600">
-              <input type="checkbox" className="rounded border-gray-300" />
-              Remember me
-            </label>
-          )}
-
-          <button
-            type="submit"
-            disabled={isSubmitting}
-            className="w-full rounded bg-yellow-400 px-4 py-2 font-semibold text-black disabled:opacity-60"
-          >
-            {isSubmitting
-              ? mode === "login"
-                ? "Signing in..."
-                : "Creating account..."
-              : mode === "login"
-                ? "Login"
-                : "Sign Up"}
-          </button>
-        </form>
-
-        <div className="mt-5 flex flex-col gap-2 text-center text-sm">
-          <button
-            onClick={() => {
-              setMode(mode === "login" ? "signup" : "login")
-              setAuthError("")
-              setForgotMessage("")
-            }}
-            className="font-semibold text-yellow-700"
-          >
-            {mode === "login"
-              ? "Create a collaborator account"
-              : "Back to login"}
-          </button>
-
-          {mode === "login" && (
             <button
-              onClick={() => setIsForgotModalOpen(true)}
-              className="text-gray-600 underline"
+              type="submit"
+              disabled={isSubmitting}
+              className="w-full rounded bg-yellow-400 px-4 py-2 font-semibold text-black disabled:opacity-60"
             >
-              Forgot password?
+              {isSubmitting
+                ? mode === "login"
+                  ? "Signing in..."
+                  : "Creating account..."
+                : mode === "login"
+                  ? "Login"
+                  : "Sign Up"}
             </button>
-          )}
+          </form>
 
-          {forgotMessage && (
-            <p className="rounded border border-gray-200 bg-gray-50 px-3 py-2 text-gray-600">
-              {forgotMessage}
-            </p>
-          )}
+          <div className="mt-5 flex flex-col gap-2 text-center text-sm">
+            <button
+              onClick={() => {
+                setMode(mode === "login" ? "signup" : "login")
+                setAuthError("")
+                setForgotMessage("")
+              }}
+              className="font-semibold text-yellow-700"
+            >
+              {mode === "login"
+                ? "Create a collaborator account"
+                : "Back to login"}
+            </button>
+
+            {mode === "login" && (
+              <button
+                onClick={() => setIsForgotModalOpen(true)}
+                className="text-gray-600 underline"
+              >
+                Forgot password?
+              </button>
+            )}
+
+            {forgotMessage && (
+              <p className="rounded border border-gray-200 bg-gray-50 px-3 py-2 text-gray-600">
+                {forgotMessage}
+              </p>
+            )}
+          </div>
         </div>
-      </div>
       </div>
       {isForgotModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
@@ -1648,12 +1806,63 @@ function getRequestDueDate(request: PartRequest) {
     : request.dueDate || request.expectedReturnDate
 }
 
+function formatRequestedAt(value?: string) {
+  if (!value) {
+    return "-"
+  }
+
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) {
+    return "-"
+  }
+
+  return date.toLocaleString("en-US", {
+    year: "numeric",
+    month: "short",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  })
+}
+
+function sortWorkflowRequests<
+  T extends { id: number; status: RequestStatus; createdAt?: string },
+>(requests: T[]) {
+  const statusRank = (status: RequestStatus) =>
+    status === "Pending" ? 0 : status === "Return Pending" ? 1 : 2
+
+  return [...requests].sort((a, b) => {
+    const rankDifference = statusRank(a.status) - statusRank(b.status)
+    if (rankDifference !== 0) {
+      return rankDifference
+    }
+
+    const aTime = a.createdAt ? new Date(a.createdAt).getTime() : a.id
+    const bTime = b.createdAt ? new Date(b.createdAt).getTime() : b.id
+
+    return a.status === "Pending" ? aTime - bTime : bTime - aTime
+  })
+}
+
+function hasReturnReport(request: PartRequest) {
+  return Boolean(
+    request.returnDeclaredAt ||
+    request.returnConfirmedAt ||
+    request.status === "Return Pending" ||
+    request.status === "Returned" ||
+    request.status === "Damaged"
+  )
+}
+
 function NotificationDropdown({
   summary,
   onNavigate,
+  onMarkAllSeen,
 }: {
   summary: NotificationSummary
   onNavigate: (item: NotificationItemSummary) => void
+  onMarkAllSeen: () => void
 }) {
   if (summary.totalUnread > 0 && summary.items.length === 0) {
     console.warn("Notification summary has pending count but no items", summary)
@@ -1663,9 +1872,20 @@ function NotificationDropdown({
     <div className="absolute right-0 top-14 z-20 w-96 rounded-lg bg-white p-4 text-black shadow-lg">
       <div className="mb-3 flex items-center justify-between">
         <h3 className="font-bold">Notifications</h3>
-        <span className="rounded-full bg-yellow-100 px-3 py-1 text-xs font-semibold text-yellow-800">
-          {summary.totalUnread} pending
-        </span>
+        <div className="flex items-center gap-2">
+          {summary.items.some((item) => item.type === "RequestUpdate") && (
+            <button
+              type="button"
+              onClick={onMarkAllSeen}
+              className="text-xs font-semibold text-blue-700 hover:underline"
+            >
+              Mark all as seen
+            </button>
+          )}
+          <span className="rounded-full bg-yellow-100 px-3 py-1 text-xs font-semibold text-yellow-800">
+            {summary.totalUnread} pending
+          </span>
+        </div>
       </div>
 
       <div className="max-h-80 space-y-3 overflow-y-auto">
@@ -1711,12 +1931,6 @@ function NotificationItem({
         </p>
       )}
     </button>
-  )
-}
-
-function getLowStockParts(parts: Part[]) {
-  return parts.filter(
-    (part) => part.availableQuantity <= 5 && part.availableQuantity > 0
   )
 }
 
@@ -1769,16 +1983,6 @@ function getCollaboratorStats(
   }
 }
 
-function getActiveBorrowers(
-  collaborators: Collaborator[],
-  reservations: Reservation[]
-) {
-  return collaborators.filter(
-    (collaborator) =>
-      getCollaboratorStats(collaborator, reservations).borrowedItems > 0
-  ).length
-}
-
 function getMostActiveCollaborator(
   collaborators: Collaborator[],
   reservations: Reservation[]
@@ -1795,23 +1999,29 @@ function Dashboard({
   parts,
   reservations,
   collaborators,
+  currentUser,
+  users,
+  partRequests,
+  purchases,
+  notificationSummary,
   analyticsSummary,
   isLoadingAnalytics,
   analyticsError,
+  lowStockThreshold,
 }: {
   parts: Part[]
   reservations: Reservation[]
   collaborators: Collaborator[]
+  currentUser: AuthUser
+  users: AuthUser[]
+  partRequests: PartRequest[]
+  purchases: Purchase[]
+  notificationSummary: NotificationSummary
   analyticsSummary: AnalyticsSummary | null
   isLoadingAnalytics: boolean
   analyticsError: string | null
+  lowStockThreshold: number
 }) {
-  const localBorrowedReservations = reservations.filter(
-    (reservation) => reservation.status === "Borrowed"
-  ).length
-  const localReservedReservations = reservations.filter(
-    (reservation) => reservation.status === "Reserved"
-  ).length
   const localTopBorrowedPart = getBorrowedPartRanking(reservations)[0]
   const localMostActiveCollaborator = getMostActiveCollaborator(
     collaborators,
@@ -1821,7 +2031,40 @@ function Dashboard({
     analyticsSummary?.mostBorrowedParts[0] || localTopBorrowedPart
   const mostActiveCollaborator =
     analyticsSummary?.mostActiveCollaborators[0] || null
-  const localLowStockAlertCounter = getLowStockParts(parts).length
+  const localLowStockAlertCounter = parts.filter(
+    (part) =>
+      part.availableQuantity > 0 &&
+      part.availableQuantity <= lowStockThreshold
+  ).length
+  const localReservedQuantity = partRequests
+    .filter((request) => request.status === "Reserved")
+    .reduce((total, request) => total + request.quantity, 0)
+  const localBorrowedQuantity = partRequests
+    .filter((request) => request.status === "Borrowed")
+    .reduce((total, request) => total + request.quantity, 0)
+  const managerCount = users.length
+    ? users.filter((user) => user.role === "Inventory Manager").length
+    : currentUser.role === "Inventory Manager"
+      ? 1
+      : 0
+  const adminCount = users.length
+    ? users.filter((user) => user.role === "Admin").length
+    : currentUser.role === "Admin"
+      ? 1
+      : 0
+  const pendingRequests =
+    notificationSummary.counts.pendingPartRequests +
+    notificationSummary.counts.pendingMissingItemRequests
+  const pendingPurchases = purchases.filter(
+    (purchase) =>
+      purchase.status === "Pending" ||
+      purchase.status === "Approved" ||
+      purchase.status === "Ordered"
+  ).length
+  const returnIssues = partRequests.filter(
+    (request) =>
+      request.status === "Return Pending" || request.status === "Damaged"
+  ).length
 
   return (
     <>
@@ -1856,7 +2099,7 @@ function Dashboard({
           label="Borrowed"
           value={String(
             analyticsSummary?.borrowedParts ??
-              parts.reduce((total, part) => total + part.borrowedQuantity, 0)
+            localBorrowedQuantity
           )}
           color="text-blue-600"
         />
@@ -1868,18 +2111,30 @@ function Dashboard({
           color="text-red-600"
         />
         <StatCard
-          label="Borrowed Reservations"
+          label="Reserved"
           value={String(
-            analyticsSummary?.borrowedReservations ?? localBorrowedReservations
+            analyticsSummary?.reservedParts ??
+            localReservedQuantity
           )}
-          color="text-blue-600"
+          color="text-orange-600"
         />
         <StatCard
-          label="Reserved Reservations"
+          label="Damaged"
           value={String(
-            analyticsSummary?.reservedReservations ?? localReservedReservations
+            analyticsSummary?.damagedParts ??
+            parts.reduce((total, part) => total + part.damagedQuantity, 0)
           )}
-          color="text-yellow-600"
+          color="text-red-700"
+        />
+        <StatCard
+          label="Managers"
+          value={String(managerCount)}
+          color="text-indigo-600"
+        />
+        <StatCard
+          label="Admins"
+          value={String(adminCount)}
+          color="text-gray-900"
         />
         <StatCard
           label="Total Collaborators"
@@ -1887,21 +2142,13 @@ function Dashboard({
             analyticsSummary?.totalCollaborators ?? collaborators.length
           )}
         />
-        <StatCard
-          label="Active Borrowers"
-          value={String(
-            analyticsSummary?.activeBorrowers ??
-            getActiveBorrowers(collaborators, reservations)
-          )}
-          color="text-blue-600"
-        />
       </div>
 
       <div className="bg-white rounded-lg shadow p-6 mt-8">
         <h3 className="text-xl font-bold mb-4">Quick Analytics Preview</h3>
 
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          <div className="border border-gray-200 rounded p-4">
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
+          <div className="rounded border border-gray-200 p-4">
             <p className="text-gray-500">Top Borrowed Part</p>
             <h4 className="text-lg font-bold">
               {topBorrowedPart?.partName || "No borrowed parts"}
@@ -1911,7 +2158,7 @@ function Dashboard({
             </p>
           </div>
 
-          <div className="border border-gray-200 rounded p-4">
+          <div className="rounded border border-gray-200 p-4">
             <p className="text-gray-500">Most Active Collaborator</p>
             <h4 className="text-lg font-bold">
               {mostActiveCollaborator?.collaboratorName ||
@@ -1926,12 +2173,50 @@ function Dashboard({
             </p>
           </div>
 
-          <div className="border border-gray-200 rounded p-4">
+          <div className="rounded border border-gray-200 p-4">
             <p className="text-gray-500">Low Stock Alerts</p>
             <h4 className="text-lg font-bold text-red-600">
               {analyticsSummary?.lowStockParts ?? localLowStockAlertCounter}
             </h4>
             <p className="text-sm text-gray-500">parts need attention</p>
+          </div>
+
+          <div className="rounded border border-gray-200 p-4">
+            <p className="text-gray-500">Pending Requests</p>
+            <h4 className="text-lg font-bold text-yellow-700">
+              {pendingRequests}
+            </h4>
+            <p className="text-sm text-gray-500">
+              part and missing item requests awaiting review
+            </p>
+          </div>
+
+          <div className="rounded border border-gray-200 p-4">
+            <p className="text-gray-500">Pending Purchases</p>
+            <h4 className="text-lg font-bold text-blue-700">
+              {pendingPurchases}
+            </h4>
+            <p className="text-sm text-gray-500">
+              purchase requests pending or ordered
+            </p>
+          </div>
+
+          <div
+            className={`rounded border p-4 ${returnIssues > 0
+              ? "border-red-200 bg-red-50"
+              : "border-gray-200"
+              }`}
+          >
+            <p className="text-gray-500">Return Issues</p>
+            <h4
+              className={`text-lg font-bold ${returnIssues > 0 ? "text-red-700" : "text-green-700"
+                }`}
+            >
+              {returnIssues}
+            </h4>
+            <p className="text-sm text-gray-500">
+              return confirmations or damaged returns
+            </p>
           </div>
         </div>
       </div>
@@ -1943,10 +2228,26 @@ function Analytics({
   analyticsSummary,
   isLoadingAnalytics,
   analyticsError,
+  currentUser,
+  parts,
+  partRequests,
+  missingItemRequests,
+  purchases,
+  collaborators,
+  users,
+  lowStockThreshold,
 }: {
   analyticsSummary: AnalyticsSummary | null
   isLoadingAnalytics: boolean
   analyticsError: string | null
+  currentUser: AuthUser
+  parts: Part[]
+  partRequests: PartRequest[]
+  missingItemRequests: MissingItemRequest[]
+  purchases: Purchase[]
+  collaborators: Collaborator[]
+  users: AuthUser[]
+  lowStockThreshold: number
 }) {
   const inventoryByCategory =
     analyticsSummary?.inventoryByCategory.map((category) => ({
@@ -1955,6 +2256,290 @@ function Analytics({
     })) || []
   const divisionAnalytics = analyticsSummary?.reservationsByDivision || []
   const groupAnalytics = analyticsSummary?.borrowedPartsByGroup || []
+
+  async function downloadAnalyticsPdf() {
+    if (!analyticsSummary) {
+      return
+    }
+
+    const doc = new jsPDF({ orientation: "landscape", unit: "mm", format: "a4" })
+    const generatedAt = new Date()
+    let y = 18
+
+    try {
+      const logo = await loadLogoDataUrl()
+      doc.addImage(logo, "PNG", 14, 9, 38, 12)
+    } catch {
+      // The report remains usable if the optional logo cannot be loaded.
+    }
+
+    doc.setFontSize(18)
+    doc.setFont("helvetica", "bold")
+    doc.text("StockDashboard Inventory Report", 58, 17)
+    doc.setFontSize(9)
+    doc.setFont("helvetica", "normal")
+    doc.text(`Generated: ${generatedAt.toLocaleString()}`, 58, 23)
+    doc.text(
+      `Generated by: ${currentUser.name} (${currentUser.role})`,
+      58,
+      28
+    )
+    y = 38
+
+    const section = (title: string) => {
+      if (y > 180) {
+        doc.addPage()
+        y = 16
+      }
+      doc.setFont("helvetica", "bold")
+      doc.setFontSize(13)
+      doc.text(title, 14, y)
+      y += 5
+    }
+    const afterTable = () => {
+      const tableDoc = doc as jsPDF & {
+        lastAutoTable?: { finalY: number }
+      }
+      y = (tableDoc.lastAutoTable?.finalY || y) + 9
+    }
+    const table = (
+      head: string[][],
+      body: Array<Array<string | number>>,
+      options: Record<string, unknown> = {}
+    ) => {
+      autoTable(doc, {
+        startY: y,
+        head,
+        body: body.length ? body : [["No data available"]],
+        theme: "grid",
+        styles: { fontSize: 8, cellPadding: 2 },
+        headStyles: { fillColor: [31, 41, 55] },
+        ...options,
+      })
+      afterTable()
+    }
+
+    const availableQuantity = parts.reduce(
+      (sum, part) => sum + (part.availableQuantity || 0),
+      0
+    )
+    const reservedQuantity = parts.reduce(
+      (sum, part) => sum + (part.reservedQuantity || 0),
+      0
+    )
+    const borrowedQuantity = parts.reduce(
+      (sum, part) => sum + (part.borrowedQuantity || 0),
+      0
+    )
+    const damagedQuantity = parts.reduce(
+      (sum, part) => sum + (part.damagedQuantity || 0),
+      0
+    )
+    const pendingRequests =
+      partRequests.filter((request) => request.status === "Pending").length +
+      missingItemRequests.filter((request) => request.status === "Pending").length
+    const pendingPurchases = purchases.filter((purchase) =>
+      ["Pending", "Approved", "Ordered", "In Transit"].includes(purchase.status)
+    ).length
+
+    section("Executive Summary")
+    table(
+      [
+        [
+          "Total Parts",
+          "Available",
+          "Reserved",
+          "Borrowed",
+          "Damaged",
+          "Low Stock",
+          "Collaborators",
+          "Pending Requests",
+          "Pending Purchases",
+        ],
+      ],
+      [
+        [
+          analyticsSummary.totalParts,
+          availableQuantity,
+          reservedQuantity,
+          borrowedQuantity,
+          damagedQuantity,
+          analyticsSummary.lowStockParts,
+          analyticsSummary.totalCollaborators,
+          pendingRequests,
+          pendingPurchases,
+        ],
+      ]
+    )
+
+    doc.addPage()
+    doc.setFont("helvetica", "bold")
+    doc.setFontSize(16)
+    doc.text("Analytics Charts", 14, 16)
+    const chartDefinitions = [
+      {
+        id: "analytics-inventory-category-chart",
+        title: "Inventory by Category",
+        x: 10,
+        fallbackHead: [["Category", "Parts"]],
+        fallbackBody: analyticsSummary.inventoryByCategory.map((item) => [
+          item.category,
+          item.count,
+        ]),
+      },
+      {
+        id: "analytics-reservations-division-chart",
+        title: "Reservations by Division",
+        x: 106,
+        fallbackHead: [["Division", "Reserved", "Borrowed Qty"]],
+        fallbackBody: analyticsSummary.reservationsByDivision.map((item) => [
+          item.division,
+          item.activeReservations,
+          item.borrowedParts,
+        ]),
+      },
+      {
+        id: "analytics-borrowed-group-chart",
+        title: "Borrowed Parts by Group",
+        x: 202,
+        fallbackHead: [["Group", "Borrowed Qty"]],
+        fallbackBody: analyticsSummary.borrowedPartsByGroup.map((item) => [
+          item.group,
+          item.borrowedParts,
+        ]),
+      },
+    ]
+    const failedCharts: typeof chartDefinitions = []
+
+    for (const chart of chartDefinitions) {
+      doc.setFontSize(10)
+      doc.text(chart.title, chart.x, 25)
+      try {
+        const image = await captureChartDataUrl(chart.id)
+        doc.addImage(image, "PNG", chart.x, 29, 85, 58)
+      } catch {
+        failedCharts.push(chart)
+        doc.setDrawColor(209, 213, 219)
+        doc.rect(chart.x, 29, 85, 58)
+        doc.setFont("helvetica", "normal")
+        doc.setFontSize(9)
+        doc.text("Chart unavailable. See table fallback.", chart.x + 5, 58)
+      }
+    }
+
+    if (failedCharts.length > 0) {
+      y = 100
+      for (const chart of failedCharts) {
+        section(`${chart.title} - Table Fallback`)
+        table(chart.fallbackHead, chart.fallbackBody)
+      }
+    } else {
+      y = 100
+    }
+
+    section("Inventory Overview")
+    table(
+      [
+        [
+          "Name",
+          "Category",
+          "Reference",
+          "Total",
+          "Available",
+          "Reserved",
+          "Borrowed",
+          "Damaged",
+          "Location",
+          "Status",
+        ],
+      ],
+      parts.map((part) => [
+        part.name,
+        part.category,
+        part.reference,
+        part.totalQuantity ?? part.quantity ?? 0,
+        part.availableQuantity ?? part.quantity ?? 0,
+        part.reservedQuantity ?? 0,
+        part.borrowedQuantity ?? 0,
+        part.damagedQuantity ?? 0,
+        part.location,
+        part.status,
+      ]),
+      { tableWidth: "auto" }
+    )
+
+    section("Requests Summary")
+    table(
+      [["Pending", "Borrowed", "Reserved", "Returned", "Damaged"]],
+      [
+        [
+          pendingRequests,
+          partRequests.filter((request) => request.status === "Borrowed").length,
+          partRequests.filter((request) => request.status === "Reserved").length,
+          partRequests.filter((request) => request.status === "Returned").length,
+          partRequests.filter((request) => request.status === "Damaged").length,
+        ],
+      ]
+    )
+
+    section("Purchase Summary")
+    table(
+      [["Pending", "Ordered", "Received", "Cancelled"]],
+      [
+        [
+          purchases.filter((purchase) => purchase.status === "Pending").length,
+          purchases.filter((purchase) => purchase.status === "Ordered").length,
+          purchases.filter((purchase) => purchase.status === "Received").length,
+          purchases.filter((purchase) => purchase.status === "Cancelled").length,
+        ],
+      ]
+    )
+
+    section("Collaborator Summary")
+    table(
+      [["Collaborators", "Managers", "Admins", "Average Rating"]],
+      [
+        [
+          collaborators.length,
+          users.filter((user) => user.role === "Inventory Manager").length,
+          users.filter((user) => user.role === "Admin").length,
+          collaborators.length
+            ? (
+              collaborators.reduce(
+                (sum, collaborator) => sum + (collaborator.rating || 0),
+                0
+              ) / collaborators.length
+            ).toFixed(1)
+            : "No data available",
+        ],
+      ]
+    )
+    table(
+      [["Top Active Collaborator", "Reservations", "Borrowed"]],
+      analyticsSummary.mostActiveCollaborators.slice(0, 10).map((item) => [
+        item.collaboratorName,
+        item.reservationCount,
+        item.borrowedCount,
+      ])
+    )
+
+    section("Low Stock")
+    table(
+      [["Part", "Reference", "Available", "Threshold", "Status"]],
+      parts
+        .filter((part) => (part.availableQuantity ?? part.quantity ?? 0) <= lowStockThreshold)
+        .map((part) => [
+          part.name,
+          part.reference,
+          part.availableQuantity ?? part.quantity ?? 0,
+          lowStockThreshold,
+          part.status,
+        ])
+    )
+
+    addPdfFooter(doc)
+    doc.save(`stockdashboard-report-${getTodayDate()}.pdf`)
+  }
 
   if (isLoadingAnalytics) {
     return (
@@ -1978,7 +2563,16 @@ function Analytics({
 
   return (
     <>
-      <h2 className="text-3xl font-bold mb-8">Analytics</h2>
+      <div className="mb-8 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+        <h2 className="text-3xl font-bold">Analytics</h2>
+        <button
+          onClick={downloadAnalyticsPdf}
+          className="inline-flex items-center justify-center gap-2 rounded bg-yellow-400 px-4 py-2 font-semibold text-black transition hover:bg-yellow-300"
+        >
+          <Download className="h-4 w-4" />
+          Download PDF Report
+        </button>
+      </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-6 mb-8">
         <StatCard label="Total Parts" value={String(analyticsSummary.totalParts)} />
@@ -1998,6 +2592,14 @@ function Analytics({
           color="text-yellow-600"
         />
         <StatCard
+          label="Damaged Parts"
+          value={String(
+            analyticsSummary.damagedParts ??
+              parts.reduce((total, part) => total + part.damagedQuantity, 0)
+          )}
+          color="text-red-700"
+        />
+        <StatCard
           label="Total Collaborators"
           value={String(analyticsSummary.totalCollaborators)}
         />
@@ -2014,7 +2616,10 @@ function Analytics({
       </div>
 
       <div className="grid grid-cols-1 xl:grid-cols-3 gap-6 mb-8">
-        <ChartCard title="Inventory by Category">
+        <ChartCard
+          title="Inventory by Category"
+          chartId="analytics-inventory-category-chart"
+        >
           <ResponsiveContainer width="100%" height={260}>
             <PieChart>
               <Pie
@@ -2040,24 +2645,43 @@ function Analytics({
           </ResponsiveContainer>
         </ChartCard>
 
-        <ChartCard title="Reservations by Division">
+        <ChartCard
+          title="Reservations by Division"
+          chartId="analytics-reservations-division-chart"
+        >
           <ResponsiveContainer width="100%" height={260}>
             <BarChart data={divisionAnalytics}>
               <XAxis dataKey="division" tick={{ fontSize: 12 }} />
               <YAxis allowDecimals={false} />
               <Tooltip />
-              <Bar dataKey="reservationCount" fill="#facc15" />
+              <Bar
+                dataKey="activeReservations"
+                name="Reserved requests"
+                fill="#facc15"
+              />
+              <Bar
+                dataKey="borrowedParts"
+                name="Borrowed quantity"
+                fill="#2563eb"
+              />
             </BarChart>
           </ResponsiveContainer>
         </ChartCard>
 
-        <ChartCard title="Borrowed Parts by Group">
+        <ChartCard
+          title="Borrowed Parts by Group"
+          chartId="analytics-borrowed-group-chart"
+        >
           <ResponsiveContainer width="100%" height={260}>
             <BarChart data={groupAnalytics}>
               <XAxis dataKey="group" tick={{ fontSize: 12 }} />
               <YAxis allowDecimals={false} />
               <Tooltip />
-              <Bar dataKey="borrowedCount" fill="#2563eb" />
+              <Bar
+                dataKey="borrowedParts"
+                name="Borrowed quantity"
+                fill="#2563eb"
+              />
             </BarChart>
           </ResponsiveContainer>
         </ChartCard>
@@ -2148,6 +2772,8 @@ function Analytics({
                 <th className="text-left py-3 px-2">Collaborators</th>
                 <th className="text-left py-3 px-2">Active Reservations</th>
                 <th className="text-left py-3 px-2">Borrowed Parts</th>
+                <th className="text-left py-3 px-2">Returned</th>
+                <th className="text-left py-3 px-2">Damaged</th>
               </tr>
             </thead>
             <tbody>
@@ -2157,6 +2783,8 @@ function Analytics({
                   <td className="py-3 px-2">{division.collaborators}</td>
                   <td className="py-3 px-2">{division.activeReservations}</td>
                   <td className="py-3 px-2">{division.borrowedParts}</td>
+                  <td className="py-3 px-2">{division.returnedParts || 0}</td>
+                  <td className="py-3 px-2">{division.damagedParts || 0}</td>
                 </tr>
               ))}
             </tbody>
@@ -2171,6 +2799,8 @@ function Analytics({
                 <th className="text-left py-3 px-2">Collaborators</th>
                 <th className="text-left py-3 px-2">Active Reservations</th>
                 <th className="text-left py-3 px-2">Borrowed Parts</th>
+                <th className="text-left py-3 px-2">Returned</th>
+                <th className="text-left py-3 px-2">Damaged</th>
               </tr>
             </thead>
             <tbody>
@@ -2180,6 +2810,8 @@ function Analytics({
                   <td className="py-3 px-2">{group.collaborators}</td>
                   <td className="py-3 px-2">{group.activeReservations}</td>
                   <td className="py-3 px-2">{group.borrowedParts}</td>
+                  <td className="py-3 px-2">{group.returnedParts || 0}</td>
+                  <td className="py-3 px-2">{group.damagedParts || 0}</td>
                 </tr>
               ))}
             </tbody>
@@ -2226,17 +2858,30 @@ function Inventory({
   const [requestingPart, setRequestingPart] = useState<Part | null>(null)
   const [unavailablePart, setUnavailablePart] = useState<Part | null>(null)
   const [buyingPart, setBuyingPart] = useState<Part | null>(null)
+  const purchaseSaveInFlight = useRef(false)
+  const [page, setPage] = useState(1)
 
-  const filteredParts = parts.filter((part) => {
-    const matchesSearch =
-      part.name.toLowerCase().includes(search.toLowerCase()) ||
-      part.reference.toLowerCase().includes(search.toLowerCase())
+  const filteredParts = parts
+    .filter((part) => {
+      const matchesSearch =
+        part.name.toLowerCase().includes(search.toLowerCase()) ||
+        part.reference.toLowerCase().includes(search.toLowerCase())
 
-    const matchesCategory =
-      category === "All Categories" || part.category === category
+      const matchesCategory =
+        category === "All Categories" || part.category === category
 
-    return matchesSearch && matchesCategory
-  })
+      return matchesSearch && matchesCategory
+    })
+    .sort((firstPart, secondPart) =>
+      firstPart.name.localeCompare(secondPart.name, undefined, {
+        sensitivity: "base",
+      })
+    )
+  const paginatedParts = getPageItems(filteredParts, page)
+
+  useEffect(() => {
+    setPage(1)
+  }, [search, category])
 
   async function handleDelete(id: number) {
     try {
@@ -2361,6 +3006,11 @@ function Inventory({
     reason: string
     priority: PurchasePriority
   }) {
+    if (purchaseSaveInFlight.current) {
+      return
+    }
+
+    purchaseSaveInFlight.current = true
     try {
       setPartsError(null)
 
@@ -2381,6 +3031,8 @@ function Inventory({
       setBuyingPart(null)
     } catch {
       setPartsError("Failed to create purchase request")
+    } finally {
+      purchaseSaveInFlight.current = false
     }
   }
 
@@ -2439,7 +3091,7 @@ function Inventory({
 
         <table className="w-full">
           <thead>
-            <tr className="border-b bg-gray-100">
+            <tr className="border-b bg-gray-100 text-xs uppercase text-gray-600">
               <th className="text-left py-3 px-2">Name</th>
               <th className="text-left py-3 px-2">Category</th>
               <th className="text-left py-3 px-2">Reference</th>
@@ -2451,14 +3103,14 @@ function Inventory({
               <th className="text-left py-3 px-2">Location</th>
               <th className="text-left py-3 px-2">Status</th>
               {(canManageParts || canRequestParts) && (
-                <th className="text-left py-3 px-2">Actions</th>
+                <th className="w-44 px-2 py-3 text-left">Actions</th>
               )}
             </tr>
           </thead>
 
           <tbody>
-            {filteredParts.map((part) => (
-              <tr key={part.id} className="border-b hover:bg-gray-50">
+            {paginatedParts.items.map((part) => (
+              <tr key={part.id} className="border-b border-gray-100 transition hover:bg-gray-50">
                 <td className="py-3 px-2 font-medium">{part.name}</td>
                 <td className="py-3 px-2">{part.category}</td>
                 <td className="py-3 px-2">{part.reference}</td>
@@ -2474,58 +3126,65 @@ function Inventory({
                   />
                 </td>
                 {(canManageParts || canRequestParts) && (
-                  <td className="py-3 px-2 space-x-2">
-                    {canManageParts && (
-                      <>
-                        <button
-                          onClick={() => {
-                            setEditingPart(part)
-                            setIsModalOpen(true)
-                          }}
-                          className="text-blue-600"
-                        >
-                          Edit
-                        </button>
+                  <td className="px-2 py-3">
+                    <div className="flex items-center gap-2 whitespace-nowrap">
+                      {canManageParts && (
+                        <>
+                          <IconButton
+                            icon={<Pencil className="h-4 w-4" />}
+                            label={`Edit ${part.name}`}
+                            tone="blue"
+                            onClick={() => {
+                              setEditingPart(part)
+                              setIsModalOpen(true)
+                            }}
+                          />
+                          <IconButton
+                            icon={<ShoppingCart className="h-4 w-4" />}
+                            label={`Purchase ${part.name}`}
+                            tone="yellow"
+                            onClick={() => setBuyingPart(part)}
+                          />
+                          <IconButton
+                            icon={<Trash2 className="h-4 w-4" />}
+                            label={`Delete ${part.name}`}
+                            tone="red"
+                            onClick={() => handleDelete(part.id)}
+                          />
+                        </>
+                      )}
 
-                        <button
-                          onClick={() => setBuyingPart(part)}
-                          className="text-yellow-700 font-semibold"
-                        >
-                          Buy
-                        </button>
-
-                        <button
-                          onClick={() => handleDelete(part.id)}
-                          className="text-red-600"
-                        >
-                          Delete
-                        </button>
-                      </>
-                    )}
-
-                    {canRequestParts && part.availableQuantity > 0 && (
-                      <button
-                        onClick={() => setRequestingPart(part)}
-                        className="text-yellow-700 font-semibold"
-                      >
-                        Request
-                      </button>
-                    )}
-                    {canRequestParts && part.availableQuantity <= 0 && (
-                      <button
-                        onClick={() => setUnavailablePart(part)}
-                        title="Ask manager for unavailable stock"
-                        className="text-yellow-700 font-semibold"
-                      >
-                        Ask Manager
-                      </button>
-                    )}
+                      {canRequestParts && part.availableQuantity > 0 && (
+                        <IconButton
+                          icon={<FilePlus2 className="h-4 w-4" />}
+                          label="Request this part"
+                          tone="yellow"
+                          onClick={() => setRequestingPart(part)}
+                        />
+                      )}
+                      {canRequestParts && part.availableQuantity <= 0 && (
+                        <IconButton
+                          icon={<UserRoundSearch className="h-4 w-4" />}
+                          label="Ask manager about this part"
+                          tone="yellow"
+                          onClick={() => setUnavailablePart(part)}
+                        />
+                      )}
+                    </div>
                   </td>
                 )}
               </tr>
             ))}
           </tbody>
         </table>
+        <Pagination
+          page={paginatedParts.page}
+          totalPages={paginatedParts.totalPages}
+          start={paginatedParts.start}
+          end={paginatedParts.end}
+          total={filteredParts.length}
+          onPageChange={setPage}
+        />
       </div>
 
       {isModalOpen && (
@@ -2603,6 +3262,7 @@ function Collaborators({
     useState<Collaborator | null>(null)
   const [ratingHistoryCollaborator, setRatingHistoryCollaborator] =
     useState<Collaborator | null>(null)
+  const [page, setPage] = useState(1)
 
   const filteredCollaborators = collaborators.filter((collaborator) => {
     const normalizedSearch = search.toLowerCase()
@@ -2618,6 +3278,11 @@ function Collaborators({
 
     return matchesSearch && matchesDivision && matchesGroup
   })
+  const paginatedCollaborators = getPageItems(filteredCollaborators, page)
+
+  useEffect(() => {
+    setPage(1)
+  }, [search, division, group])
 
   async function handleDelete(id: number) {
     try {
@@ -2742,7 +3407,7 @@ function Collaborators({
 
         <table className="w-full min-w-[1020px]">
           <thead>
-            <tr className="border-b bg-gray-100">
+            <tr className="border-b bg-gray-100 text-xs uppercase text-gray-600">
               <th className="text-left py-3 px-2">Name</th>
               <th className="text-left py-3 px-2">Email</th>
               <th className="text-left py-3 px-2">Division</th>
@@ -2754,13 +3419,13 @@ function Collaborators({
               <th className="text-left py-3 px-2">Borrowed Items</th>
               {(canManageCollaborators ||
                 currentUser.role === "Inventory Manager") && (
-                <th className="text-left py-3 px-2">Actions</th>
-              )}
+                  <th className="text-left py-3 px-2">Actions</th>
+                )}
             </tr>
           </thead>
 
           <tbody>
-            {filteredCollaborators.map((collaborator) => {
+            {paginatedCollaborators.items.map((collaborator) => {
               const activeRequests = partRequests.filter(
                 (request) =>
                   request.collaboratorId === collaborator.id &&
@@ -2781,14 +3446,14 @@ function Collaborators({
               const managerName =
                 assignedManager?.name ||
                 (currentUser.role === "Inventory Manager" &&
-                currentUser.managedDivision === collaborator.division
+                  currentUser.managedDivision === collaborator.division
                   ? currentUser.name
                   : "-")
 
               return (
                 <tr
                   key={collaborator.id}
-                  className="border-b hover:bg-gray-50"
+                  className="border-b border-gray-100 transition hover:bg-gray-50"
                 >
                   <td className="py-3 px-2 font-medium">
                     {collaborator.name}
@@ -2805,36 +3470,38 @@ function Collaborators({
                   <td className="py-3 px-2">{borrowedItems}</td>
                   {(canManageCollaborators ||
                     currentUser.role === "Inventory Manager") && (
-                    <td className="py-3 px-2 space-x-2">
-                      {canManageCollaborators && (
-                        <button
-                          onClick={() => {
-                            setEditingCollaborator(collaborator)
-                            setIsModalOpen(true)
-                          }}
-                          className="text-blue-600"
-                        >
-                          Edit
-                        </button>
-                      )}
+                      <td className="py-3 px-2">
+                        <div className="flex w-36 flex-wrap items-center gap-2">
+                          {canManageCollaborators && (
+                            <IconButton
+                              icon={<Pencil className="h-4 w-4" />}
+                              label="Edit collaborator"
+                              onClick={() => {
+                                setEditingCollaborator(collaborator)
+                                setIsModalOpen(true)
+                              }}
+                              tone="blue"
+                            />
+                          )}
 
-                      {canManageCollaborators && (
-                        <button
-                          onClick={() => handleDelete(collaborator.id)}
-                          className="text-red-600"
-                        >
-                          Delete
-                        </button>
-                      )}
+                          {canManageCollaborators && (
+                            <IconButton
+                              icon={<Trash2 className="h-4 w-4" />}
+                              label="Delete collaborator"
+                              onClick={() => handleDelete(collaborator.id)}
+                              tone="red"
+                            />
+                          )}
 
-                      <button
-                        onClick={() => setRatingHistoryCollaborator(collaborator)}
-                        className="text-yellow-700 font-semibold"
-                      >
-                        Rating History
-                      </button>
-                    </td>
-                  )}
+                          <IconButton
+                            icon={<Eye className="h-4 w-4" />}
+                            label="View rating history"
+                            onClick={() => setRatingHistoryCollaborator(collaborator)}
+                            tone="yellow"
+                          />
+                        </div>
+                      </td>
+                    )}
                 </tr>
               )
             })}
@@ -2844,7 +3511,7 @@ function Collaborators({
                 <td
                   colSpan={
                     canManageCollaborators ||
-                    currentUser.role === "Inventory Manager"
+                      currentUser.role === "Inventory Manager"
                       ? 10
                       : 9
                   }
@@ -2856,6 +3523,14 @@ function Collaborators({
             )}
           </tbody>
         </table>
+        <Pagination
+          page={paginatedCollaborators.page}
+          totalPages={paginatedCollaborators.totalPages}
+          start={paginatedCollaborators.start}
+          end={paginatedCollaborators.end}
+          total={paginatedCollaborators.total}
+          onPageChange={setPage}
+        />
       </div>
 
       {isModalOpen && (
@@ -2917,6 +3592,8 @@ function RatingHistoryModal({
   const [rating, setRating] = useState(collaborator.rating || 5)
   const [reason, setReason] = useState("")
   const [error, setError] = useState("")
+  const [page, setPage] = useState(1)
+  const paginatedHistory = getPageItems(history, page)
 
   useEffect(() => {
     async function loadHistory() {
@@ -3004,7 +3681,7 @@ function RatingHistoryModal({
         </div>
 
         <div className="mt-6 max-h-72 overflow-y-auto">
-          {history.map((item) => (
+          {paginatedHistory.items.map((item) => (
             <div key={item.id} className="border-b py-3">
               <p className="font-semibold">
                 {item.previousRating} → {item.newRating}
@@ -3020,6 +3697,14 @@ function RatingHistoryModal({
               No rating history yet.
             </p>
           )}
+          <Pagination
+            page={paginatedHistory.page}
+            totalPages={paginatedHistory.totalPages}
+            start={paginatedHistory.start}
+            end={paginatedHistory.end}
+            total={paginatedHistory.total}
+            onPageChange={setPage}
+          />
         </div>
 
         <div className="mt-6 flex justify-end">
@@ -3172,6 +3857,26 @@ function RequestsPage({
   } | null>(null)
   const [confirmingReturnRequest, setConfirmingReturnRequest] =
     useState<PartRequest | null>(null)
+  const [viewingReturnReport, setViewingReturnReport] =
+    useState<PartRequest | null>(null)
+  const [partPage, setPartPage] = useState(1)
+  const [missingPage, setMissingPage] = useState(1)
+  const actionablePartRequests = partRequests.filter(
+    (request) =>
+      request.status === "Pending" || request.status === "Return Pending"
+  )
+  const actionableMissingItemRequests = missingItemRequests.filter(
+    (request) => request.status === "Pending"
+  )
+  const sortedPartRequests = sortWorkflowRequests(actionablePartRequests)
+  const sortedMissingItemRequests = sortWorkflowRequests(
+    actionableMissingItemRequests
+  )
+  const paginatedPartRequests = getPageItems(sortedPartRequests, partPage)
+  const paginatedMissingRequests = getPageItems(
+    sortedMissingItemRequests,
+    missingPage
+  )
 
   async function handlePartRequestAction(
     id: number,
@@ -3284,11 +3989,10 @@ function RequestsPage({
 
       <div
         id="PartRequests"
-        className={`bg-white rounded-lg shadow p-6 mb-8 overflow-x-auto ${
-          isHighlightTarget(highlightTarget, "Requests", "PartRequests")
-            ? "ring-4 ring-yellow-300"
-            : ""
-        }`}
+        className={`bg-white rounded-lg shadow p-6 mb-8 overflow-x-auto ${isHighlightTarget(highlightTarget, "Requests", "PartRequests")
+          ? "ring-4 ring-yellow-300"
+          : ""
+          }`}
       >
         <h3 className="text-xl font-bold mb-4">Part Requests</h3>
 
@@ -3304,93 +4008,108 @@ function RequestsPage({
           </div>
         )}
 
-        <table className="w-full min-w-[1080px]">
+        <table className="w-full min-w-[1240px]">
           <thead>
-            <tr className="border-b bg-gray-100">
-              <th className="text-left py-3 px-2">Collaborator</th>
-              <th className="text-left py-3 px-2">Part</th>
-              <th className="text-left py-3 px-2">Type</th>
-              <th className="text-left py-3 px-2">Quantity</th>
-              <th className="text-left py-3 px-2">Start / Usage Date</th>
-              <th className="text-left py-3 px-2">Due Date</th>
-              <th className="text-left py-3 px-2">Reason</th>
-              <th className="text-left py-3 px-2">Status</th>
-              <th className="text-left py-3 px-2">Comment</th>
+            <tr className="border-b bg-gray-100 text-xs uppercase text-gray-600">
+              <th className="px-3 py-3 text-left">Collaborator</th>
+              <th className="px-3 py-3 text-left">Part</th>
+              <th className="px-3 py-3 text-left">Type</th>
+              <th className="px-3 py-3 text-left">Quantity</th>
+              <th className="px-3 py-3 text-left">Requested At</th>
+              <th className="px-3 py-3 text-left">Start / Usage Date</th>
+              <th className="px-3 py-3 text-left">Due Date</th>
+              <th className="px-3 py-3 text-left">Reason</th>
+              <th className="px-3 py-3 text-left">Status</th>
+              <th className="px-3 py-3 text-left">Comment</th>
               {canApproveRequests && (
-                <th className="text-left py-3 px-2">Actions</th>
+                <th className="px-3 py-3 text-left">Actions</th>
               )}
             </tr>
           </thead>
 
           <tbody>
-            {partRequests.map((request) => (
+            {paginatedPartRequests.items.map((request) => (
               <tr
                 id={`PartRequests-${request.id}`}
                 key={request.id}
-                className={`border-b hover:bg-gray-50 ${
-                  isHighlightTarget(
-                    highlightTarget,
-                    "Requests",
-                    "PartRequests",
-                    request.id
-                  )
-                    ? "bg-yellow-100"
-                    : ""
-                }`}
+                className={`border-b border-gray-100 transition hover:bg-gray-50 ${isHighlightTarget(
+                  highlightTarget,
+                  "Requests",
+                  "PartRequests",
+                  request.id
+                )
+                  ? "bg-yellow-100"
+                  : ""
+                  }`}
               >
-                <td className="py-3 px-2 font-medium">
+                <td className="px-3 py-4 font-medium">
                   {request.collaborator?.name || "Unknown"}
                 </td>
-                <td className="py-3 px-2">{request.part?.name || "Unknown"}</td>
-                <td className="py-3 px-2">{request.requestType}</td>
-                <td className="py-3 px-2">{request.quantity}</td>
-                <td className="py-3 px-2">{getRequestStartDate(request)}</td>
-                <td className="py-3 px-2">{getRequestDueDate(request)}</td>
-                <td className="py-3 px-2">{request.reason}</td>
-                <td className="py-3 px-2">
+                <td className="px-3 py-4">{request.part?.name || "Unknown"}</td>
+                <td className="px-3 py-4">{request.requestType}</td>
+                <td className="px-3 py-4">{request.quantity}</td>
+                <td className="whitespace-nowrap px-3 py-4 text-sm text-gray-600">
+                  {formatRequestedAt(request.createdAt)}
+                </td>
+                <td className="px-3 py-4">{getRequestStartDate(request)}</td>
+                <td className="px-3 py-4">{getRequestDueDate(request)}</td>
+                <td className="max-w-56 px-3 py-4 text-sm text-gray-600">
+                  {request.reason}
+                </td>
+                <td className="px-3 py-4">
                   <StatusPill status={request.status} />
                 </td>
-                <td className="py-3 px-2">
+                <td className="max-w-48 px-3 py-4 text-sm text-gray-600">
                   {request.managerComment || "-"}
                 </td>
                 {canApproveRequests && (
-                  <td className="py-3 px-2">
+                  <td className="px-3 py-4">
                     <div className="flex flex-wrap gap-2">
                       {request.status === "Pending" && (
                         <>
-                          <button
+                          <IconButton
+                            icon={<CheckCircle className="h-4 w-4" />}
+                            label="Approve request"
                             onClick={() =>
                               setPendingPartAction({
                                 id: request.id,
                                 action: "approve",
                               })
                             }
-                            className="text-green-600 font-semibold"
-                          >
-                            Approve
-                          </button>
-                          <button
+                            tone="green"
+                          />
+                          <IconButton
+                            icon={<XCircle className="h-4 w-4" />}
+                            label="Reject request"
                             onClick={() =>
                               setPendingPartAction({
                                 id: request.id,
                                 action: "reject",
                               })
                             }
-                            className="text-red-600 font-semibold"
-                          >
-                            Reject
-                          </button>
+                            tone="red"
+                          />
                         </>
                       )}
 
                       {request.status === "Return Pending" && (
-                          <button
-                            onClick={() => setConfirmingReturnRequest(request)}
-                            className="text-blue-600 font-semibold"
-                          >
-                            Confirm Return
-                          </button>
-                        )}
+                        <IconButton
+                          icon={<ClipboardCheck className="h-4 w-4" />}
+                          label="Confirm return"
+                          onClick={() => setConfirmingReturnRequest(request)}
+                          tone="yellow"
+                        />
+                      )}
+                      {hasReturnReport(request) && (
+                        <IconButton
+                          icon={<FileText className="h-4 w-4" />}
+                          label="View return report"
+                          onClick={() => setViewingReturnReport(request)}
+                          tone={
+                            request.status === "Damaged" ? "red" : "neutral"
+                          }
+                        />
+                      )}
                     </div>
                   </td>
                 )}
@@ -3398,94 +4117,104 @@ function RequestsPage({
             ))}
           </tbody>
         </table>
+        <Pagination
+          page={paginatedPartRequests.page}
+          totalPages={paginatedPartRequests.totalPages}
+          start={paginatedPartRequests.start}
+          end={paginatedPartRequests.end}
+          total={paginatedPartRequests.total}
+          onPageChange={setPartPage}
+        />
       </div>
 
       <div
         id="MissingItemRequests"
-        className={`bg-white rounded-lg shadow p-6 overflow-x-auto ${
-          isHighlightTarget(highlightTarget, "Requests", "MissingItemRequests")
-            ? "ring-4 ring-yellow-300"
-            : ""
-        }`}
+        className={`bg-white rounded-lg shadow p-6 overflow-x-auto ${isHighlightTarget(highlightTarget, "Requests", "MissingItemRequests")
+          ? "ring-4 ring-yellow-300"
+          : ""
+          }`}
       >
         <h3 className="text-xl font-bold mb-4">Missing Item Requests</h3>
 
-        <table className="w-full min-w-[1080px]">
+        <table className="w-full min-w-[1180px]">
           <thead>
-            <tr className="border-b bg-gray-100">
-              <th className="text-left py-3 px-2">Collaborator</th>
-              <th className="text-left py-3 px-2">Item</th>
-              <th className="text-left py-3 px-2">Category</th>
-              <th className="text-left py-3 px-2">Manufacturer</th>
-              <th className="text-left py-3 px-2">Reference</th>
-              <th className="text-left py-3 px-2">Quantity</th>
-              <th className="text-left py-3 px-2">Needed Date</th>
-              <th className="text-left py-3 px-2">Status</th>
-              <th className="text-left py-3 px-2">Comment</th>
+            <tr className="border-b bg-gray-100 text-xs uppercase text-gray-600">
+              <th className="px-3 py-3 text-left">Collaborator</th>
+              <th className="px-3 py-3 text-left">Item</th>
+              <th className="px-3 py-3 text-left">Category</th>
+              <th className="px-3 py-3 text-left">Manufacturer</th>
+              <th className="px-3 py-3 text-left">Reference</th>
+              <th className="px-3 py-3 text-left">Quantity</th>
+              <th className="px-3 py-3 text-left">Requested At</th>
+              <th className="px-3 py-3 text-left">Needed Date</th>
+              <th className="px-3 py-3 text-left">Status</th>
+              <th className="px-3 py-3 text-left">Comment</th>
               {canApproveRequests && (
-                <th className="text-left py-3 px-2">Actions</th>
+                <th className="px-3 py-3 text-left">Actions</th>
               )}
             </tr>
           </thead>
 
           <tbody>
-            {missingItemRequests.map((request) => (
+            {paginatedMissingRequests.items.map((request) => (
               <tr
                 id={`MissingItemRequests-${request.id}`}
                 key={request.id}
-                className={`border-b hover:bg-gray-50 ${
-                  isHighlightTarget(
-                    highlightTarget,
-                    "Requests",
-                    "MissingItemRequests",
-                    request.id
-                  )
-                    ? "bg-yellow-100"
-                    : ""
-                }`}
+                className={`border-b border-gray-100 transition hover:bg-gray-50 ${isHighlightTarget(
+                  highlightTarget,
+                  "Requests",
+                  "MissingItemRequests",
+                  request.id
+                )
+                  ? "bg-yellow-100"
+                  : ""
+                  }`}
               >
-                <td className="py-3 px-2 font-medium">
+                <td className="px-3 py-4 font-medium">
                   {request.collaborator?.name || "Unknown"}
                 </td>
-                <td className="py-3 px-2">{request.itemName}</td>
-                <td className="py-3 px-2">{request.category}</td>
-                <td className="py-3 px-2">{request.manufacturer || "-"}</td>
-                <td className="py-3 px-2">{request.reference || "-"}</td>
-                <td className="py-3 px-2">{request.quantityNeeded}</td>
-                <td className="py-3 px-2">{request.neededDate}</td>
-                <td className="py-3 px-2">
+                <td className="px-3 py-4">{request.itemName}</td>
+                <td className="px-3 py-4">{request.category}</td>
+                <td className="px-3 py-4">{request.manufacturer || "-"}</td>
+                <td className="px-3 py-4">{request.reference || "-"}</td>
+                <td className="px-3 py-4">{request.quantityNeeded}</td>
+                <td className="whitespace-nowrap px-3 py-4 text-sm text-gray-600">
+                  {formatRequestedAt(request.createdAt)}
+                </td>
+                <td className="px-3 py-4">{request.neededDate}</td>
+                <td className="px-3 py-4">
                   <StatusPill status={request.status} />
                 </td>
-                <td className="py-3 px-2">
+                <td className="max-w-48 px-3 py-4 text-sm text-gray-600">
                   {request.managerComment || "-"}
                 </td>
                 {canApproveRequests && (
-                  <td className="py-3 px-2 space-x-2">
+                  <td className="px-3 py-4">
                     {request.status === "Pending" && (
-                      <>
-                        <button
+                      <div className="flex items-center gap-2">
+                        <IconButton
+                          icon={<CheckCircle className="h-4 w-4" />}
+                          label="Approve missing item request"
                           onClick={() =>
                             setPendingMissingAction({
                               id: request.id,
                               action: "approve",
                             })
                           }
-                          className="text-green-600 font-semibold"
-                        >
-                          Approve
-                        </button>
-                        <button
+                          tone="green"
+                        />
+                        <IconButton
+                          icon={<XCircle className="h-4 w-4" />}
+                          label="Reject missing item request"
                           onClick={() =>
                             setPendingMissingAction({
                               id: request.id,
                               action: "reject",
                             })
                           }
-                          className="text-red-600 font-semibold"
-                        >
-                          Reject
-                        </button>
-                      </>
+                          tone="red"
+                        />
+                      </div>
                     )}
                   </td>
                 )}
@@ -3493,6 +4222,14 @@ function RequestsPage({
             ))}
           </tbody>
         </table>
+        <Pagination
+          page={paginatedMissingRequests.page}
+          totalPages={paginatedMissingRequests.totalPages}
+          start={paginatedMissingRequests.start}
+          end={paginatedMissingRequests.end}
+          total={paginatedMissingRequests.total}
+          onPageChange={setMissingPage}
+        />
       </div>
 
       {pendingPartAction && activePartActionConfig && (
@@ -3536,6 +4273,13 @@ function RequestsPage({
           onConfirm={handleConfirmReturn}
         />
       )}
+
+      {viewingReturnReport && (
+        <ReturnReportModal
+          request={viewingReturnReport}
+          onClose={() => setViewingReturnReport(null)}
+        />
+      )}
     </>
   )
 }
@@ -3562,6 +4306,7 @@ function SuppliersPage({
   const [search, setSearch] = useState("")
   const [isModalOpen, setIsModalOpen] = useState(false)
   const [editingSupplier, setEditingSupplier] = useState<Supplier | null>(null)
+  const [page, setPage] = useState(1)
 
   const filteredSuppliers = suppliers.filter((supplier) => {
     const normalizedSearch = search.toLowerCase()
@@ -3572,6 +4317,11 @@ function SuppliersPage({
       supplier.country.toLowerCase().includes(normalizedSearch)
     )
   })
+  const paginatedSuppliers = getPageItems(filteredSuppliers, page)
+
+  useEffect(() => {
+    setPage(1)
+  }, [search])
 
   async function handleSave(supplier: Supplier) {
     const { id, ...supplierPayload } = supplier
@@ -3659,7 +4409,7 @@ function SuppliersPage({
 
         <table className="w-full min-w-[1100px]">
           <thead>
-            <tr className="border-b bg-gray-100">
+            <tr className="border-b bg-gray-100 text-xs uppercase text-gray-600">
               <th className="px-2 py-3 text-left">Name</th>
               <th className="px-2 py-3 text-left">Contact Person</th>
               <th className="px-2 py-3 text-left">Email</th>
@@ -3673,7 +4423,7 @@ function SuppliersPage({
             </tr>
           </thead>
           <tbody>
-            {filteredSuppliers.map((supplier) => (
+            {paginatedSuppliers.items.map((supplier) => (
               <tr key={supplier.id} className="border-b hover:bg-gray-50">
                 <td className="px-2 py-3 font-medium">{supplier.name}</td>
                 <td className="px-2 py-3">{supplier.contactPerson || "-"}</td>
@@ -3683,34 +4433,35 @@ function SuppliersPage({
                 <td className="px-2 py-3">{supplier.country || "-"}</td>
                 <td className="px-2 py-3">
                   <span
-                    className={`rounded-full px-3 py-1 text-sm font-semibold ${
-                      supplier.status === "Active"
-                        ? "bg-green-100 text-green-800"
-                        : "bg-gray-100 text-gray-700"
-                    }`}
+                    className={`rounded-full px-3 py-1 text-sm font-semibold ${supplier.status === "Active"
+                      ? "bg-green-100 text-green-800"
+                      : "bg-gray-100 text-gray-700"
+                      }`}
                   >
                     {supplier.status}
                   </span>
                 </td>
                 {canEditSuppliers && (
-                  <td className="px-2 py-3 space-x-3">
-                    <button
-                      onClick={() => {
-                        setEditingSupplier(supplier)
-                        setIsModalOpen(true)
-                      }}
-                      className="text-blue-600"
-                    >
-                      Edit
-                    </button>
-                    {canDeleteSuppliers && (
-                      <button
-                        onClick={() => handleDelete(supplier.id)}
-                        className="text-red-600"
-                      >
-                        Delete
-                      </button>
-                    )}
+                  <td className="w-28 px-2 py-3">
+                    <div className="flex items-center gap-2">
+                      <IconButton
+                        icon={<Pencil className="h-4 w-4" />}
+                        label="Edit supplier"
+                        onClick={() => {
+                          setEditingSupplier(supplier)
+                          setIsModalOpen(true)
+                        }}
+                        tone="blue"
+                      />
+                      {canDeleteSuppliers && (
+                        <IconButton
+                          icon={<Trash2 className="h-4 w-4" />}
+                          label="Delete supplier"
+                          onClick={() => handleDelete(supplier.id)}
+                          tone="red"
+                        />
+                      )}
+                    </div>
                   </td>
                 )}
               </tr>
@@ -3727,6 +4478,14 @@ function SuppliersPage({
             )}
           </tbody>
         </table>
+        <Pagination
+          page={paginatedSuppliers.page}
+          totalPages={paginatedSuppliers.totalPages}
+          start={paginatedSuppliers.start}
+          end={paginatedSuppliers.end}
+          total={paginatedSuppliers.total}
+          onPageChange={setPage}
+        />
       </div>
 
       {isModalOpen && (
@@ -3880,6 +4639,17 @@ function MyRequestsPage({
   const [isMissingItemModalOpen, setIsMissingItemModalOpen] = useState(false)
   const [declaringReturnRequest, setDeclaringReturnRequest] =
     useState<PartRequest | null>(null)
+  const [viewingReturnReport, setViewingReturnReport] =
+    useState<PartRequest | null>(null)
+  const [partPage, setPartPage] = useState(1)
+  const [missingPage, setMissingPage] = useState(1)
+  const sortedPartRequests = sortWorkflowRequests(partRequests)
+  const sortedMissingItemRequests = sortWorkflowRequests(missingItemRequests)
+  const paginatedPartRequests = getPageItems(sortedPartRequests, partPage)
+  const paginatedMissingRequests = getPageItems(
+    sortedMissingItemRequests,
+    missingPage
+  )
 
   async function handleMissingItemRequest(input: {
     itemName: string
@@ -3963,11 +4733,10 @@ function MyRequestsPage({
 
       <div
         id="MyPartRequests"
-        className={`bg-white rounded-lg shadow p-6 mb-8 overflow-x-auto ${
-          isHighlightTarget(highlightTarget, "My Requests", "MyPartRequests")
-            ? "ring-4 ring-yellow-300"
-            : ""
-        }`}
+        className={`bg-white rounded-lg shadow p-6 mb-8 overflow-x-auto ${isHighlightTarget(highlightTarget, "My Requests", "MyPartRequests")
+          ? "ring-4 ring-yellow-300"
+          : ""
+          }`}
       >
         {isLoadingRequests && (
           <div className="mb-6 rounded border border-gray-200 bg-gray-50 px-4 py-3 text-gray-600">
@@ -3988,6 +4757,7 @@ function MyRequestsPage({
               <th className="text-left py-3 px-2">Part</th>
               <th className="text-left py-3 px-2">Type</th>
               <th className="text-left py-3 px-2">Quantity</th>
+              <th className="text-left py-3 px-2">Requested At</th>
               <th className="text-left py-3 px-2">Start / Usage Date</th>
               <th className="text-left py-3 px-2">Due Date</th>
               <th className="text-left py-3 px-2">Status</th>
@@ -3996,26 +4766,28 @@ function MyRequestsPage({
             </tr>
           </thead>
           <tbody>
-            {partRequests.map((request) => (
+            {paginatedPartRequests.items.map((request) => (
               <tr
                 id={`MyPartRequests-${request.id}`}
                 key={request.id}
-                className={`border-b hover:bg-gray-50 ${
-                  isHighlightTarget(
-                    highlightTarget,
-                    "My Requests",
-                    "MyPartRequests",
-                    request.id
-                  )
-                    ? "bg-yellow-100"
-                    : ""
-                }`}
+                className={`border-b border-gray-100 transition hover:bg-gray-50 ${isHighlightTarget(
+                  highlightTarget,
+                  "My Requests",
+                  "MyPartRequests",
+                  request.id
+                )
+                  ? "bg-yellow-100"
+                  : ""
+                  }`}
               >
                 <td className="py-3 px-2 font-medium">
                   {request.part?.name || "Unknown"}
                 </td>
                 <td className="py-3 px-2">{request.requestType}</td>
                 <td className="py-3 px-2">{request.quantity}</td>
+                <td className="whitespace-nowrap px-2 py-3 text-sm text-gray-600">
+                  {formatRequestedAt(request.createdAt)}
+                </td>
                 <td className="py-3 px-2">{getRequestStartDate(request)}</td>
                 <td className="py-3 px-2">{getRequestDueDate(request)}</td>
                 <td className="py-3 px-2">
@@ -4024,66 +4796,86 @@ function MyRequestsPage({
                 <td className="py-3 px-2">
                   {request.managerComment || "-"}
                 </td>
-                <td className="py-3 px-2">
-                  {(request.status === "Reserved" ||
-                    request.status === "Borrowed") && (
-                    <button
-                      onClick={() => setDeclaringReturnRequest(request)}
-                      className="font-semibold text-blue-600"
-                    >
-                      Declare Return
-                    </button>
-                  )}
+                <td className="w-28 py-3 px-2">
+                  <div className="flex items-center gap-2">
+                    {(request.status === "Reserved" ||
+                      request.status === "Borrowed") && (
+                        <IconButton
+                          icon={<RotateCcw className="h-4 w-4" />}
+                          label="Declare return"
+                          onClick={() => setDeclaringReturnRequest(request)}
+                          tone="blue"
+                        />
+                      )}
+                    {hasReturnReport(request) && (
+                      <IconButton
+                        icon={<FileText className="h-4 w-4" />}
+                        label="View return report"
+                        onClick={() => setViewingReturnReport(request)}
+                        tone={request.status === "Damaged" ? "red" : "neutral"}
+                      />
+                    )}
+                  </div>
                 </td>
               </tr>
             ))}
           </tbody>
         </table>
+        <Pagination
+          page={paginatedPartRequests.page}
+          totalPages={paginatedPartRequests.totalPages}
+          start={paginatedPartRequests.start}
+          end={paginatedPartRequests.end}
+          total={paginatedPartRequests.total}
+          onPageChange={setPartPage}
+        />
       </div>
 
       <div
         id="MyMissingItemRequests"
-        className={`bg-white rounded-lg shadow p-6 overflow-x-auto ${
-          isHighlightTarget(
-            highlightTarget,
-            "My Requests",
-            "MyMissingItemRequests"
-          )
-            ? "ring-4 ring-yellow-300"
-            : ""
-        }`}
+        className={`bg-white rounded-lg shadow p-6 overflow-x-auto ${isHighlightTarget(
+          highlightTarget,
+          "My Requests",
+          "MyMissingItemRequests"
+        )
+          ? "ring-4 ring-yellow-300"
+          : ""
+          }`}
       >
         <h3 className="text-xl font-bold mb-4">Missing Item Requests</h3>
         <table className="w-full min-w-[860px]">
           <thead>
-            <tr className="border-b bg-gray-100">
+            <tr className="border-b bg-gray-100 text-xs uppercase text-gray-600">
               <th className="text-left py-3 px-2">Item</th>
               <th className="text-left py-3 px-2">Category</th>
               <th className="text-left py-3 px-2">Quantity</th>
+              <th className="text-left py-3 px-2">Requested At</th>
               <th className="text-left py-3 px-2">Needed Date</th>
               <th className="text-left py-3 px-2">Status</th>
               <th className="text-left py-3 px-2">Manager Comment</th>
             </tr>
           </thead>
           <tbody>
-            {missingItemRequests.map((request) => (
+            {paginatedMissingRequests.items.map((request) => (
               <tr
                 id={`MyMissingItemRequests-${request.id}`}
                 key={request.id}
-                className={`border-b hover:bg-gray-50 ${
-                  isHighlightTarget(
-                    highlightTarget,
-                    "My Requests",
-                    "MyMissingItemRequests",
-                    request.id
-                  )
-                    ? "bg-yellow-100"
-                    : ""
-                }`}
+                className={`border-b hover:bg-gray-50 ${isHighlightTarget(
+                  highlightTarget,
+                  "My Requests",
+                  "MyMissingItemRequests",
+                  request.id
+                )
+                  ? "bg-yellow-100"
+                  : ""
+                  }`}
               >
                 <td className="py-3 px-2 font-medium">{request.itemName}</td>
                 <td className="py-3 px-2">{request.category}</td>
                 <td className="py-3 px-2">{request.quantityNeeded}</td>
+                <td className="whitespace-nowrap px-2 py-3 text-sm text-gray-600">
+                  {formatRequestedAt(request.createdAt)}
+                </td>
                 <td className="py-3 px-2">{request.neededDate}</td>
                 <td className="py-3 px-2">
                   <StatusPill status={request.status} />
@@ -4095,6 +4887,14 @@ function MyRequestsPage({
             ))}
           </tbody>
         </table>
+        <Pagination
+          page={paginatedMissingRequests.page}
+          totalPages={paginatedMissingRequests.totalPages}
+          start={paginatedMissingRequests.start}
+          end={paginatedMissingRequests.end}
+          total={paginatedMissingRequests.total}
+          onPageChange={setMissingPage}
+        />
       </div>
 
       {isMissingItemModalOpen && (
@@ -4109,6 +4909,13 @@ function MyRequestsPage({
           request={declaringReturnRequest}
           onClose={() => setDeclaringReturnRequest(null)}
           onDeclare={handleDeclareReturn}
+        />
+      )}
+
+      {viewingReturnReport && (
+        <ReturnReportModal
+          request={viewingReturnReport}
+          onClose={() => setViewingReturnReport(null)}
         />
       )}
     </>
@@ -4148,9 +4955,17 @@ function PurchasesPage({
 }) {
   const [isModalOpen, setIsModalOpen] = useState(false)
   const [editingPurchase, setEditingPurchase] = useState<Purchase | null>(null)
+  const [page, setPage] = useState(1)
+  const purchaseSaveInFlight = useRef(false)
   const isAdmin = currentUser.role === "Admin"
+  const paginatedPurchases = getPageItems(purchases, page)
 
   async function savePurchase(input: Partial<Purchase>) {
+    if (purchaseSaveInFlight.current) {
+      return
+    }
+
+    purchaseSaveInFlight.current = true
     try {
       setPurchasesError(null)
       const response = await apiFetch(
@@ -4176,6 +4991,8 @@ function PurchasesPage({
       await reloadNotificationSummary()
     } catch {
       setPurchasesError("Failed to save purchase request")
+    } finally {
+      purchaseSaveInFlight.current = false
     }
   }
 
@@ -4243,11 +5060,10 @@ function PurchasesPage({
 
       <div
         id="PurchaseRequests"
-        className={`overflow-x-auto rounded-lg bg-white p-6 shadow ${
-          isHighlightTarget(highlightTarget, "Purchase", "PurchaseRequests")
-            ? "ring-4 ring-yellow-300"
-            : ""
-        }`}
+        className={`overflow-x-auto rounded-lg bg-white p-6 shadow ${isHighlightTarget(highlightTarget, "Purchase", "PurchaseRequests")
+          ? "ring-4 ring-yellow-300"
+          : ""
+          }`}
       >
         {isLoadingPurchases && (
           <div className="mb-6 rounded border border-gray-200 bg-gray-50 px-4 py-3 text-gray-600">
@@ -4276,20 +5092,19 @@ function PurchasesPage({
             </tr>
           </thead>
           <tbody>
-            {purchases.map((purchase) => (
+            {paginatedPurchases.items.map((purchase) => (
               <tr
                 id={`PurchaseRequests-${purchase.id}`}
                 key={purchase.id}
-                className={`border-b hover:bg-gray-50 ${
-                  isHighlightTarget(
-                    highlightTarget,
-                    "Purchase",
-                    "PurchaseRequests",
-                    purchase.id
-                  )
-                    ? "bg-yellow-100"
-                    : ""
-                }`}
+                className={`border-b hover:bg-gray-50 ${isHighlightTarget(
+                  highlightTarget,
+                  "Purchase",
+                  "PurchaseRequests",
+                  purchase.id
+                )
+                  ? "bg-yellow-100"
+                  : ""
+                  }`}
               >
                 <td className="px-2 py-3 font-medium">{purchase.itemName}</td>
                 <td className="px-2 py-3">{purchase.category}</td>
@@ -4306,66 +5121,63 @@ function PurchasesPage({
                 </td>
                 <td className="px-2 py-3">
                   <div className="flex flex-wrap gap-2">
-                    <button
+                    <IconButton
+                      icon={<Pencil className="h-4 w-4" />}
+                      label="Edit purchase"
                       onClick={() => {
                         setEditingPurchase(purchase)
                         setIsModalOpen(true)
                       }}
-                      className="text-blue-600"
-                    >
-                      Edit
-                    </button>
+                      tone="blue"
+                    />
                     {isAdmin && purchase.status === "Pending" && (
-                      <button
+                      <IconButton
+                        icon={<CheckCircle className="h-4 w-4" />}
+                        label="Approve purchase"
                         onClick={() => updateStatus(purchase.id, "approve")}
-                        className="text-purple-700 font-semibold"
-                      >
-                        Approve
-                      </button>
+                        tone="green"
+                      />
                     )}
-                    {isAdmin &&
-                      (purchase.status === "Pending" ||
-                        purchase.status === "Approved") && (
-                      <button
-                        onClick={() => updateStatus(purchase.id, "order")}
-                        className="text-yellow-700 font-semibold"
-                      >
-                        Order
-                      </button>
+                    {isAdmin && purchase.status === "Approved" && (
+                        <IconButton
+                          icon={<ShoppingCart className="h-4 w-4" />}
+                          label="Order purchase"
+                          onClick={() => updateStatus(purchase.id, "order")}
+                          tone="yellow"
+                        />
                     )}
-                    {isAdmin &&
-                      (purchase.status === "Ordered" ||
-                        purchase.status === "Approved") && (
-                      <button
-                        onClick={() => updateStatus(purchase.id, "in-transit")}
-                        className="text-blue-700 font-semibold"
-                      >
-                        In Transit
-                      </button>
+                    {isAdmin && purchase.status === "Ordered" && (
+                        <IconButton
+                          icon={<Truck className="h-4 w-4" />}
+                          label="Mark purchase in transit"
+                          onClick={() => updateStatus(purchase.id, "in-transit")}
+                          tone="blue"
+                        />
                     )}
-                    {isAdmin && purchase.status !== "Received" && (
-                      <button
+                    {isAdmin && purchase.status === "In Transit" && (
+                      <IconButton
+                        icon={<ClipboardCheck className="h-4 w-4" />}
+                        label="Mark purchase received"
                         onClick={() => updateStatus(purchase.id, "receive")}
-                        className="text-green-700 font-semibold"
-                      >
-                        Receive
-                      </button>
+                        tone="green"
+                      />
                     )}
-                    {isAdmin && purchase.status !== "Cancelled" && (
-                      <button
+                    {isAdmin &&
+                      !["Received", "Cancelled"].includes(purchase.status) && (
+                      <IconButton
+                        icon={<XCircle className="h-4 w-4" />}
+                        label="Cancel purchase"
                         onClick={() => updateStatus(purchase.id, "cancel")}
-                        className="text-gray-600"
-                      >
-                        Cancel
-                      </button>
+                        tone="neutral"
+                      />
                     )}
                     {isAdmin && (
-                      <button
+                      <IconButton
+                        icon={<Trash2 className="h-4 w-4" />}
+                        label="Delete purchase"
                         onClick={() => deletePurchase(purchase.id)}
-                        className="text-red-600"
-                      >
-                        Delete
-                      </button>
+                        tone="red"
+                      />
                     )}
                   </div>
                 </td>
@@ -4380,6 +5192,14 @@ function PurchasesPage({
             )}
           </tbody>
         </table>
+        <Pagination
+          page={paginatedPurchases.page}
+          totalPages={paginatedPurchases.totalPages}
+          start={paginatedPurchases.start}
+          end={paginatedPurchases.end}
+          total={paginatedPurchases.total}
+          onPageChange={setPage}
+        />
       </div>
 
       {isModalOpen && (
@@ -4408,7 +5228,7 @@ function PurchaseStatusBadge({ status }: { status: PurchaseStatus }) {
           ? "bg-blue-100 text-blue-800"
           : status === "Approved"
             ? "bg-purple-100 text-purple-800"
-          : "bg-yellow-100 text-yellow-800"
+            : "bg-yellow-100 text-yellow-800"
 
   return (
     <span className={`rounded-full px-3 py-1 text-sm font-semibold ${classes}`}>
@@ -4444,7 +5264,10 @@ function PurchaseModal({
       currentUser.division ||
       ("Division 1" as Division),
     supplierName: purchase?.supplierName || "",
-    supplierContact: purchase?.supplierContact || "",
+    supplierContact: withoutSupplierName(
+      purchase?.supplierContact || "",
+      purchase?.supplierName || ""
+    ),
     unitPrice: purchase?.unitPrice || 0,
     totalPrice: purchase?.totalPrice || 0,
     expectedArrivalDate: purchase?.expectedArrivalDate || "",
@@ -4743,6 +5566,8 @@ function SettingsPage({
   const [lowStockThreshold, setLowStockThreshold] = useState(
     appSettings.lowStockThreshold
   )
+  const [verificationPage, setVerificationPage] = useState(1)
+  const [usersPage, setUsersPage] = useState(1)
 
   useEffect(() => {
     if (!selectedUser) {
@@ -4838,6 +5663,8 @@ function SettingsPage({
   const pendingUsers = users.filter(
     (user) => user.emailVerificationStatus === "Pending"
   )
+  const paginatedPendingUsers = getPageItems(pendingUsers, verificationPage)
+  const paginatedUsers = getPageItems(users, usersPage)
 
   return (
     <>
@@ -4939,11 +5766,10 @@ function SettingsPage({
 
       <div
         id="UserVerification"
-        className={`bg-white rounded-lg shadow p-6 mb-8 overflow-x-auto ${
-          isHighlightTarget(highlightTarget, "Settings", "UserVerification")
-            ? "ring-4 ring-yellow-300"
-            : ""
-        }`}
+        className={`bg-white rounded-lg shadow p-6 mb-8 overflow-x-auto ${isHighlightTarget(highlightTarget, "Settings", "UserVerification")
+          ? "ring-4 ring-yellow-300"
+          : ""
+          }`}
       >
         <h3 className="text-xl font-bold mb-4">User Verification</h3>
         <table className="w-full min-w-[760px]">
@@ -4957,38 +5783,39 @@ function SettingsPage({
             </tr>
           </thead>
           <tbody>
-            {pendingUsers.map((user) => (
+            {paginatedPendingUsers.items.map((user) => (
               <tr
                 id={`UserVerification-${user.id}`}
                 key={user.id}
-                className={`border-b hover:bg-gray-50 ${
-                  isHighlightTarget(
-                    highlightTarget,
-                    "Settings",
-                    "UserVerification",
-                    user.id
-                  )
-                    ? "bg-yellow-100"
-                    : ""
-                }`}
+                className={`border-b hover:bg-gray-50 ${isHighlightTarget(
+                  highlightTarget,
+                  "Settings",
+                  "UserVerification",
+                  user.id
+                )
+                  ? "bg-yellow-100"
+                  : ""
+                  }`}
               >
                 <td className="py-3 px-2 font-medium">{user.name}</td>
                 <td className="py-3 px-2">{user.email}</td>
                 <td className="py-3 px-2">{user.division}</td>
                 <td className="py-3 px-2">{user.emailVerificationStatus}</td>
-                <td className="py-3 px-2 space-x-3">
-                  <button
-                    onClick={() => updateVerificationStatus(user.id, "verify")}
-                    className="font-semibold text-green-700"
-                  >
-                    Verify
-                  </button>
-                  <button
-                    onClick={() => updateVerificationStatus(user.id, "reject")}
-                    className="font-semibold text-red-600"
-                  >
-                    Reject
-                  </button>
+                <td className="w-24 py-3 px-2">
+                  <div className="flex items-center gap-2">
+                    <IconButton
+                      icon={<CheckCircle className="h-4 w-4" />}
+                      label="Verify user"
+                      onClick={() => updateVerificationStatus(user.id, "verify")}
+                      tone="green"
+                    />
+                    <IconButton
+                      icon={<XCircle className="h-4 w-4" />}
+                      label="Reject user"
+                      onClick={() => updateVerificationStatus(user.id, "reject")}
+                      tone="red"
+                    />
+                  </div>
                 </td>
               </tr>
             ))}
@@ -5001,6 +5828,14 @@ function SettingsPage({
             )}
           </tbody>
         </table>
+        <Pagination
+          page={paginatedPendingUsers.page}
+          totalPages={paginatedPendingUsers.totalPages}
+          start={paginatedPendingUsers.start}
+          end={paginatedPendingUsers.end}
+          total={paginatedPendingUsers.total}
+          onPageChange={setVerificationPage}
+        />
       </div>
 
       <div className="bg-white rounded-lg shadow p-6 overflow-x-auto">
@@ -5020,7 +5855,7 @@ function SettingsPage({
             </tr>
           </thead>
           <tbody>
-            {users.map((user) => (
+            {paginatedUsers.items.map((user) => (
               <tr key={user.id} className="border-b hover:bg-gray-50">
                 <td className="py-3 px-2 font-medium">{user.name}</td>
                 <td className="py-3 px-2">{user.email}</td>
@@ -5031,6 +5866,14 @@ function SettingsPage({
             ))}
           </tbody>
         </table>
+        <Pagination
+          page={paginatedUsers.page}
+          totalPages={paginatedUsers.totalPages}
+          start={paginatedUsers.start}
+          end={paginatedUsers.end}
+          total={paginatedUsers.total}
+          onPageChange={setUsersPage}
+        />
       </div>
     </>
   )
@@ -5071,6 +5914,9 @@ function Reservations({
   const [pendingReturnRequestId, setPendingReturnRequestId] = useState<number | null>(
     null
   )
+  const [viewingReturnReport, setViewingReturnReport] =
+    useState<PartRequest | null>(null)
+  const [page, setPage] = useState(1)
   const operationalRequests = partRequests.filter(
     (request) =>
       request.status === "Reserved" ||
@@ -5079,6 +5925,7 @@ function Reservations({
       request.status === "Returned" ||
       request.status === "Damaged"
   )
+  const paginatedRequests = getPageItems(operationalRequests, page)
 
   async function handleCreate(reservation: Reservation) {
     const requestType =
@@ -5086,22 +5933,22 @@ function Reservations({
     const requestPayload =
       requestType === "Borrow"
         ? {
-            collaboratorId: reservation.collaboratorId,
-            partId: reservation.partId,
-            quantity: reservation.quantity,
-            requestType,
-            reason: "Created directly from Reservations page",
-            startDate: new Date().toISOString().slice(0, 10),
-            dueDate: reservation.expectedReturnDate,
-          }
+          collaboratorId: reservation.collaboratorId,
+          partId: reservation.partId,
+          quantity: reservation.quantity,
+          requestType,
+          reason: "Created directly from Reservations page",
+          startDate: new Date().toISOString().slice(0, 10),
+          dueDate: reservation.expectedReturnDate,
+        }
         : {
-            collaboratorId: reservation.collaboratorId,
-            partId: reservation.partId,
-            quantity: reservation.quantity,
-            requestType,
-            reason: "Created directly from Reservations page",
-            usageDate: reservation.expectedReturnDate,
-          }
+          collaboratorId: reservation.collaboratorId,
+          partId: reservation.partId,
+          quantity: reservation.quantity,
+          requestType,
+          reason: "Created directly from Reservations page",
+          usageDate: reservation.expectedReturnDate,
+        }
 
     try {
       setReservationsError(null)
@@ -5219,8 +6066,8 @@ function Reservations({
           </thead>
 
           <tbody>
-            {operationalRequests.map((request) => (
-              <tr key={request.id} className="border-b hover:bg-gray-50">
+            {paginatedRequests.items.map((request) => (
+              <tr key={request.id} className="border-b border-gray-100 transition hover:bg-gray-50">
                 <td className="py-3 px-2 font-medium">
                   {request.collaborator?.name || "Unknown collaborator"}
                 </td>
@@ -5242,12 +6089,20 @@ function Reservations({
                     <div className="flex flex-wrap gap-2">
                       {(request.status === "Reserved" ||
                         request.status === "Borrowed") && (
-                        <button
-                          onClick={() => setPendingReturnRequestId(request.id)}
-                          className="text-green-600"
-                        >
-                          Mark Returned
-                        </button>
+                          <IconButton
+                            icon={<RotateCcw className="h-4 w-4" />}
+                            label="Mark returned"
+                            onClick={() => setPendingReturnRequestId(request.id)}
+                            tone="green"
+                          />
+                        )}
+                      {hasReturnReport(request) && (
+                        <IconButton
+                          icon={<FileText className="h-4 w-4" />}
+                          label="View return report"
+                          onClick={() => setViewingReturnReport(request)}
+                          tone={request.status === "Damaged" ? "red" : "neutral"}
+                        />
                       )}
                     </div>
                   </td>
@@ -5267,6 +6122,14 @@ function Reservations({
             )}
           </tbody>
         </table>
+        <Pagination
+          page={paginatedRequests.page}
+          totalPages={paginatedRequests.totalPages}
+          start={paginatedRequests.start}
+          end={paginatedRequests.end}
+          total={paginatedRequests.total}
+          onPageChange={setPage}
+        />
       </div>
 
       {isModalOpen && (
@@ -5285,6 +6148,13 @@ function Reservations({
           confirmLabel="Mark Returned"
           onClose={() => setPendingReturnRequestId(null)}
           onConfirm={(comment) => returnRequest(pendingReturnRequestId, comment)}
+        />
+      )}
+
+      {viewingReturnReport && (
+        <ReturnReportModal
+          request={viewingReturnReport}
+          onClose={() => setViewingReturnReport(null)}
         />
       )}
     </>
@@ -5974,10 +6844,25 @@ function DeclareReturnModal({
   const [goodQuantity, setGoodQuantity] = useState(request.quantity)
   const [damagedQuantity, setDamagedQuantity] = useState(0)
   const [comment, setComment] = useState("")
-  const isInvalidTotal = goodQuantity + damagedQuantity !== request.quantity
   const isCommentRequired = damagedQuantity > 0 && !comment.trim()
   const isInvalid =
-    goodQuantity < 0 || damagedQuantity < 0 || isInvalidTotal || isCommentRequired
+    goodQuantity < 0 ||
+    goodQuantity > request.quantity ||
+    damagedQuantity < 0 ||
+    damagedQuantity > request.quantity ||
+    isCommentRequired
+
+  function updateGoodQuantity(value: number) {
+    const boundedValue = Math.min(request.quantity, Math.max(0, value))
+    setGoodQuantity(boundedValue)
+    setDamagedQuantity(request.quantity - boundedValue)
+  }
+
+  function updateDamagedQuantity(value: number) {
+    const boundedValue = Math.min(request.quantity, Math.max(0, value))
+    setDamagedQuantity(boundedValue)
+    setGoodQuantity(request.quantity - boundedValue)
+  }
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
@@ -5996,8 +6881,9 @@ function DeclareReturnModal({
             <input
               type="number"
               min={0}
+              max={request.quantity}
               value={goodQuantity}
-              onChange={(event) => setGoodQuantity(Number(event.target.value))}
+              onChange={(event) => updateGoodQuantity(Number(event.target.value))}
               className="w-full rounded border px-4 py-2"
             />
           </label>
@@ -6008,8 +6894,11 @@ function DeclareReturnModal({
             <input
               type="number"
               min={0}
+              max={request.quantity}
               value={damagedQuantity}
-              onChange={(event) => setDamagedQuantity(Number(event.target.value))}
+              onChange={(event) =>
+                updateDamagedQuantity(Number(event.target.value))
+              }
               className="w-full rounded border px-4 py-2"
             />
           </label>
@@ -6021,14 +6910,9 @@ function DeclareReturnModal({
           placeholder="Collaborator comment"
           className="mt-4 min-h-28 w-full rounded border px-4 py-2"
         />
-        {isInvalidTotal && (
-          <p className="mt-2 text-sm text-red-600">
-            Good and damaged quantities must equal {request.quantity}.
-          </p>
-        )}
         {isCommentRequired && (
           <p className="mt-2 text-sm text-red-600">
-            Comment is required when damaged quantity is greater than 0.
+            Comment is required when there is a damaged item.
           </p>
         )}
 
@@ -6044,6 +6928,128 @@ function DeclareReturnModal({
             className="rounded bg-yellow-400 px-4 py-2 font-semibold text-black disabled:opacity-60"
           >
             Declare Return
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function ReturnReportModal({
+  request,
+  onClose,
+}: {
+  request: PartRequest
+  onClose: () => void
+}) {
+  const damagedQuantity =
+    request.confirmedDamagedQuantity ?? request.returnDamagedQuantity ?? 0
+  const hasDamage = damagedQuantity > 0 || request.status === "Damaged"
+  const reportRows = [
+    ["Declared good quantity", request.returnGoodQuantity ?? "-"],
+    ["Declared damaged quantity", request.returnDamagedQuantity ?? "-"],
+    ["Collaborator comment", request.returnComment || "-"],
+    ["Confirmed good quantity", request.confirmedGoodQuantity ?? "-"],
+    ["Confirmed damaged quantity", request.confirmedDamagedQuantity ?? "-"],
+    [
+      "Manager comment",
+      request.returnManagerComment || request.managerComment || "-",
+    ],
+    ["Return declared at", formatRequestedAt(request.returnDeclaredAt || undefined)],
+    ["Return confirmed at", formatRequestedAt(request.returnConfirmedAt || undefined)],
+  ]
+
+  async function downloadReturnReportPdf() {
+    const doc = new jsPDF({ unit: "mm", format: "a4" })
+    const generatedAt = new Date()
+
+    try {
+      const logo = await loadLogoDataUrl()
+      doc.addImage(logo, "PNG", 14, 10, 42, 13)
+    } catch {
+      // The report remains usable if the optional logo cannot be loaded.
+    }
+
+    doc.setFont("helvetica", "bold")
+    doc.setFontSize(20)
+    doc.text("Return Report", 14, 36)
+    doc.setFont("helvetica", "normal")
+    doc.setFontSize(10)
+    doc.text(`Request #${request.id}`, 14, 43)
+
+    autoTable(doc, {
+      startY: 50,
+      head: [["Field", "Details"]],
+      body: [
+        ["Collaborator", request.collaborator?.name || "Unknown"],
+        ["Collaborator email", request.collaborator?.email || "Unknown"],
+        ["Part", request.part?.name || "Unknown"],
+        ["Reference", request.part?.reference || "-"],
+        ["Request type", request.requestType],
+        ["Original quantity", request.quantity],
+        ...reportRows,
+        ["Status", request.status],
+        ["Generated date", generatedAt.toLocaleString()],
+      ].map(([label, value]) => [String(label), String(value)]),
+      theme: "grid",
+      styles: { fontSize: 10, cellPadding: 3 },
+      headStyles: { fillColor: [31, 41, 55] },
+      columnStyles: {
+        0: { fontStyle: "bold", cellWidth: 55 },
+      },
+    })
+
+    addPdfFooter(doc)
+    doc.save(`return-report-request-${request.id}.pdf`)
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+      <div className="w-full max-w-xl rounded-lg bg-white p-6 shadow-xl">
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <h3 className="text-2xl font-bold">Return Report</h3>
+            <p className="mt-1 text-sm text-gray-500">
+              {request.part?.name || "Part"} requested by{" "}
+              {request.collaborator?.name || "collaborator"}
+            </p>
+          </div>
+          <span
+            className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-sm font-semibold ${hasDamage
+              ? "bg-red-100 text-red-800"
+              : "bg-green-100 text-green-800"
+              }`}
+          >
+            {hasDamage && <CircleAlert className="h-4 w-4" />}
+            {hasDamage ? "Damage reported" : "Returned successfully"}
+          </span>
+        </div>
+
+        <dl className="mt-6 divide-y divide-gray-100 rounded border border-gray-200">
+          {reportRows.map(([label, value]) => (
+            <div
+              key={String(label)}
+              className="grid grid-cols-1 gap-1 px-4 py-3 sm:grid-cols-[190px_1fr]"
+            >
+              <dt className="text-sm font-semibold text-gray-600">{label}</dt>
+              <dd className="text-sm text-gray-900">{String(value)}</dd>
+            </div>
+          ))}
+        </dl>
+
+        <div className="mt-6 flex flex-col-reverse justify-end gap-3 sm:flex-row">
+          <button
+            onClick={onClose}
+            className="rounded bg-gray-900 px-4 py-2 font-semibold text-white hover:bg-gray-800"
+          >
+            Close
+          </button>
+          <button
+            onClick={downloadReturnReportPdf}
+            className="inline-flex items-center justify-center gap-2 rounded bg-yellow-400 px-4 py-2 font-semibold text-black transition hover:bg-yellow-300"
+          >
+            <Download className="h-4 w-4" />
+            Download PDF
           </button>
         </div>
       </div>
@@ -6071,15 +7077,26 @@ function ConfirmReturnModal({
     request.returnDamagedQuantity ?? 0
   )
   const [managerComment, setManagerComment] = useState("")
-  const isInvalidTotal =
-    confirmedGoodQuantity + confirmedDamagedQuantity !== request.quantity
   const isCommentRequired =
     confirmedDamagedQuantity > 0 && !managerComment.trim()
   const isInvalid =
     confirmedGoodQuantity < 0 ||
+    confirmedGoodQuantity > request.quantity ||
     confirmedDamagedQuantity < 0 ||
-    isInvalidTotal ||
+    confirmedDamagedQuantity > request.quantity ||
     isCommentRequired
+
+  function updateConfirmedGoodQuantity(value: number) {
+    const boundedValue = Math.min(request.quantity, Math.max(0, value))
+    setConfirmedGoodQuantity(boundedValue)
+    setConfirmedDamagedQuantity(request.quantity - boundedValue)
+  }
+
+  function updateConfirmedDamagedQuantity(value: number) {
+    const boundedValue = Math.min(request.quantity, Math.max(0, value))
+    setConfirmedDamagedQuantity(boundedValue)
+    setConfirmedGoodQuantity(request.quantity - boundedValue)
+  }
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
@@ -6112,9 +7129,10 @@ function ConfirmReturnModal({
             <input
               type="number"
               min={0}
+              max={request.quantity}
               value={confirmedGoodQuantity}
               onChange={(event) =>
-                setConfirmedGoodQuantity(Number(event.target.value))
+                updateConfirmedGoodQuantity(Number(event.target.value))
               }
               className="w-full rounded border px-4 py-2"
             />
@@ -6126,9 +7144,10 @@ function ConfirmReturnModal({
             <input
               type="number"
               min={0}
+              max={request.quantity}
               value={confirmedDamagedQuantity}
               onChange={(event) =>
-                setConfirmedDamagedQuantity(Number(event.target.value))
+                updateConfirmedDamagedQuantity(Number(event.target.value))
               }
               className="w-full rounded border px-4 py-2"
             />
@@ -6141,14 +7160,9 @@ function ConfirmReturnModal({
           placeholder="Manager comment"
           className="mt-4 min-h-28 w-full rounded border px-4 py-2"
         />
-        {isInvalidTotal && (
-          <p className="mt-2 text-sm text-red-600">
-            Confirmed quantities must equal {request.quantity}.
-          </p>
-        )}
         {isCommentRequired && (
           <p className="mt-2 text-sm text-red-600">
-            Manager comment is required when damaged quantity is greater than 0.
+            Manager comment is required when there is a damaged item.
           </p>
         )}
 
@@ -6230,16 +7244,21 @@ function StatusPill({ status }: { status: RequestStatus }) {
   const classes =
     status === "Pending"
       ? "bg-yellow-100 text-yellow-800"
-      : status === "Rejected" || status === "Cancelled" || status === "Damaged"
+      : status === "Damaged"
         ? "bg-red-100 text-red-800"
-        : status === "Return Pending"
-          ? "bg-purple-100 text-purple-800"
-      : status === "Returned" || status === "Approved"
-          ? "bg-green-100 text-green-800"
-          : "bg-blue-100 text-blue-800"
+        : status === "Rejected" || status === "Cancelled"
+          ? "bg-gray-200 text-gray-700"
+          : status === "Return Pending"
+            ? "bg-purple-100 text-purple-800"
+            : status === "Reserved"
+              ? "bg-orange-100 text-orange-800"
+              : status === "Returned" || status === "Approved"
+                ? "bg-green-100 text-green-800"
+                : "bg-blue-100 text-blue-800"
 
   return (
-    <span className={`inline-flex rounded-full px-3 py-1 text-sm font-semibold ${classes}`}>
+    <span className={`inline-flex items-center gap-1 rounded-full px-3 py-1 text-sm font-semibold ${classes}`}>
+      {status === "Damaged" && <CircleAlert className="h-4 w-4" />}
       {status}
     </span>
   )
@@ -6253,13 +7272,13 @@ function PartStatusBadge({ status }: { status: string }) {
         ? "bg-orange-100 text-orange-800"
         : status === "Not Available"
           ? "bg-red-100 text-red-800"
-      : status === "Reserved"
-        ? "bg-yellow-100 text-yellow-800"
-        : status === "Borrowed"
-          ? "bg-blue-100 text-blue-800"
-          : status === "Damaged"
-            ? "bg-gray-200 text-gray-800"
-            : "bg-gray-100 text-gray-800"
+          : status === "Reserved"
+            ? "bg-yellow-100 text-yellow-800"
+            : status === "Borrowed"
+              ? "bg-blue-100 text-blue-800"
+              : status === "Damaged"
+                ? "bg-gray-200 text-gray-800"
+                : "bg-gray-100 text-gray-800"
 
   return (
     <span className={`inline-flex rounded-full px-3 py-1 text-sm font-semibold ${classes}`}>
@@ -6292,31 +7311,31 @@ function PartModal({
   const [form, setForm] = useState<Part>(
     part
       ? {
-          ...part,
-          totalQuantity: part.totalQuantity ?? part.quantity ?? 0,
-          availableQuantity: part.availableQuantity ?? part.quantity ?? 0,
-          reservedQuantity: part.reservedQuantity ?? 0,
-          borrowedQuantity: part.borrowedQuantity ?? 0,
-          damagedQuantity: part.damagedQuantity ?? 0,
-          stockAllocationNote: part.stockAllocationNote || "",
-        }
+        ...part,
+        totalQuantity: part.totalQuantity ?? part.quantity ?? 0,
+        availableQuantity: part.availableQuantity ?? part.quantity ?? 0,
+        reservedQuantity: part.reservedQuantity ?? 0,
+        borrowedQuantity: part.borrowedQuantity ?? 0,
+        damagedQuantity: part.damagedQuantity ?? 0,
+        stockAllocationNote: part.stockAllocationNote || "",
+      }
       : {
-      id: Date.now(),
-      name: "",
-      category: partCategories[0],
-      manufacturer: "",
-      reference: "",
-      quantity: 0,
-      totalQuantity: 0,
-      availableQuantity: 0,
-      reservedQuantity: 0,
-      borrowedQuantity: 0,
-      damagedQuantity: 0,
-      location: "",
-      description: "",
-      stockAllocationNote: "",
-      status: "Available",
-    }
+        id: Date.now(),
+        name: "",
+        category: partCategories[0],
+        manufacturer: "",
+        reference: "",
+        quantity: 0,
+        totalQuantity: 0,
+        availableQuantity: 0,
+        reservedQuantity: 0,
+        borrowedQuantity: 0,
+        damagedQuantity: 0,
+        location: "",
+        description: "",
+        stockAllocationNote: "",
+        status: "Available",
+      }
   )
   const allocationTotal =
     form.availableQuantity +
@@ -6529,6 +7548,91 @@ function PartModal({
   )
 }
 
+function IconButton({
+  icon,
+  label,
+  onClick,
+  tone = "neutral",
+  disabled = false,
+}: {
+  icon: React.ReactNode
+  label: string
+  onClick: () => void
+  tone?: "blue" | "red" | "green" | "yellow" | "neutral" | "purple"
+  disabled?: boolean
+}) {
+  const tones = {
+    blue: "border-blue-200 text-blue-700 hover:bg-blue-50",
+    red: "border-red-200 text-red-700 hover:bg-red-50",
+    green: "border-green-200 text-green-700 hover:bg-green-50",
+    yellow: "border-yellow-300 bg-yellow-50 text-yellow-800 hover:bg-yellow-100",
+    neutral: "border-gray-300 text-gray-700 hover:bg-gray-100",
+    purple: "border-purple-200 text-purple-700 hover:bg-purple-50",
+  }
+
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      title={label}
+      aria-label={label}
+      className={`inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-md border transition disabled:cursor-not-allowed disabled:opacity-40 ${tones[tone]}`}
+    >
+      {icon}
+    </button>
+  )
+}
+
+function Pagination({
+  page,
+  totalPages,
+  start,
+  end,
+  total,
+  onPageChange,
+}: {
+  page: number
+  totalPages: number
+  start: number
+  end: number
+  total: number
+  onPageChange: (page: number) => void
+}) {
+  if (total <= PAGE_SIZE) {
+    return null
+  }
+
+  return (
+    <div className="mt-4 flex flex-col gap-3 border-t border-gray-100 pt-4 text-sm text-gray-600 sm:flex-row sm:items-center sm:justify-between">
+      <span>
+        Showing {start}-{end} of {total}
+      </span>
+      <div className="flex items-center gap-2">
+        <button
+          type="button"
+          onClick={() => onPageChange(page - 1)}
+          disabled={page <= 1}
+          className="rounded border px-3 py-1.5 font-medium disabled:opacity-40"
+        >
+          Previous
+        </button>
+        <span className="min-w-24 text-center">
+          Page {page} of {totalPages}
+        </span>
+        <button
+          type="button"
+          onClick={() => onPageChange(page + 1)}
+          disabled={page >= totalPages}
+          className="rounded border px-3 py-1.5 font-medium disabled:opacity-40"
+        >
+          Next
+        </button>
+      </div>
+    </div>
+  )
+}
+
 function StatCard({
   label,
   value,
@@ -6548,13 +7652,15 @@ function StatCard({
 
 function ChartCard({
   title,
+  chartId,
   children,
 }: {
   title: string
+  chartId?: string
   children: React.ReactNode
 }) {
   return (
-    <div className="bg-white rounded-lg shadow p-6">
+    <div id={chartId} className="bg-white rounded-lg shadow p-6">
       <h3 className="text-xl font-bold mb-4">{title}</h3>
       {children}
     </div>

@@ -170,17 +170,20 @@ export class RequestsService {
 
     const part = await this.findPart(request.partId)
     if (request.status === RequestStatus.Reserved) {
-      part.reservedQuantity = Math.max(0, part.reservedQuantity - request.quantity)
+      this.releaseTrackedQuantity(part, "reservedQuantity", request.quantity)
     } else {
-      part.borrowedQuantity = Math.max(0, part.borrowedQuantity - request.quantity)
+      this.releaseTrackedQuantity(part, "borrowedQuantity", request.quantity)
     }
     part.availableQuantity += request.quantity
-    this.syncLegacyPartFields(part)
+    this.recalculateTotalQuantity(part)
     await this.partsRepository.save(part)
 
     request.status = RequestStatus.Returned
     request.managerComment = managerComment || request.managerComment
-
+    request.returnDeclaredAt = request.returnDeclaredAt || new Date()
+    request.returnConfirmedAt = new Date()
+    request.confirmedGoodQuantity = request.quantity
+    request.confirmedDamagedQuantity = 0
     await this.applyReturnRatingRule(request, user)
 
     return this.requestsRepository.save(request)
@@ -244,13 +247,13 @@ export class RequestsService {
 
     const part = await this.findPart(request.partId)
     if (request.requestType === RequestType.Reservation) {
-      part.reservedQuantity = Math.max(0, part.reservedQuantity - request.quantity)
+      this.releaseTrackedQuantity(part, "reservedQuantity", request.quantity)
     } else {
-      part.borrowedQuantity = Math.max(0, part.borrowedQuantity - request.quantity)
+      this.releaseTrackedQuantity(part, "borrowedQuantity", request.quantity)
     }
     part.availableQuantity += input.confirmedGoodQuantity
     part.damagedQuantity += input.confirmedDamagedQuantity
-    this.syncLegacyPartFields(part)
+    this.recalculateTotalQuantity(part)
     await this.partsRepository.save(part)
 
     request.returnConfirmedAt = new Date()
@@ -265,16 +268,6 @@ export class RequestsService {
         : RequestStatus.Returned
 
     await this.applyReturnRatingRule(request, user)
-    if (input.confirmedDamagedQuantity > 0) {
-      await this.adjustCollaboratorRating(
-        request.collaborator,
-        -2,
-        `Returned ${input.confirmedDamagedQuantity} damaged item${
-          input.confirmedDamagedQuantity === 1 ? "" : "s"
-        }`,
-        user.email
-      )
-    }
 
     return this.requestsRepository.save(request)
   }
@@ -295,22 +288,22 @@ export class RequestsService {
 
     const part = await this.findPart(request.partId)
     if (request.status === RequestStatus.Reserved) {
-      part.reservedQuantity = Math.max(0, part.reservedQuantity - request.quantity)
+      this.releaseTrackedQuantity(part, "reservedQuantity", request.quantity)
     } else {
-      part.borrowedQuantity = Math.max(0, part.borrowedQuantity - request.quantity)
+      this.releaseTrackedQuantity(part, "borrowedQuantity", request.quantity)
     }
     part.damagedQuantity += request.quantity
-    this.syncLegacyPartFields(part)
+    this.recalculateTotalQuantity(part)
     await this.partsRepository.save(part)
 
     await this.adjustCollaboratorRating(
       request.collaborator,
-      -2,
-      request.managerComment,
+      -1,
+      "Damaged return: -1",
       user.email
     )
 
-    request.status = RequestStatus.Returned
+    request.status = RequestStatus.Damaged
 
     return this.requestsRepository.save(request)
   }
@@ -490,31 +483,56 @@ export class RequestsService {
     part.status = part.availableQuantity > 0 ? "Available" : "Not Available"
   }
 
+  private releaseTrackedQuantity(
+    part: Part,
+    field: "reservedQuantity" | "borrowedQuantity",
+    quantity: number
+  ) {
+    if (part[field] < quantity) {
+      throw new BadRequestException(
+        `${field} cannot be reduced below zero for this return`
+      )
+    }
+
+    part[field] -= quantity
+  }
+
+  private recalculateTotalQuantity(part: Part) {
+    part.totalQuantity =
+      part.availableQuantity +
+      part.reservedQuantity +
+      part.borrowedQuantity +
+      part.damagedQuantity
+    this.syncLegacyPartFields(part)
+  }
+
   private async applyReturnRatingRule(
     request: PartRequest,
     user: AuthenticatedUser
   ) {
-    if (request.requestType !== RequestType.Borrow || !request.dueDate) {
+    const hasDamage = (request.confirmedDamagedQuantity || 0) > 0
+    const isLate =
+      request.requestType === RequestType.Borrow &&
+      Boolean(request.dueDate && request.returnDeclaredAt) &&
+      request.returnDeclaredAt!.getTime() >
+        new Date(`${request.dueDate}T23:59:59.999`).getTime()
+
+    if (!hasDamage && !isLate) {
       return
     }
 
-    const today = new Date()
-    today.setHours(0, 0, 0, 0)
+    const penalty = (hasDamage ? -1 : 0) + (isLate ? -0.5 : 0)
+    const reason =
+      hasDamage && isLate
+        ? "Damaged and late return: -1.5"
+        : hasDamage
+          ? "Damaged return: -1"
+          : "Late return: -0.5"
 
-    const dueDate = new Date(`${request.dueDate}T00:00:00`)
-    const lateDays = Math.floor(
-      (today.getTime() - dueDate.getTime()) / (1000 * 60 * 60 * 24)
-    )
-
-    if (lateDays <= 0) {
-      return
-    }
-
-    const penalty = lateDays <= 3 ? -0.5 : lateDays <= 7 ? -1 : -2
     await this.adjustCollaboratorRating(
       request.collaborator,
       penalty,
-      `Late return by ${lateDays} day${lateDays === 1 ? "" : "s"}`,
+      reason,
       user.email
     )
   }

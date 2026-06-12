@@ -54,7 +54,9 @@ import { UsersModule } from "./modules/users/users.module"
           Notification,
           NotificationSeen,
         ],
-        synchronize: process.env.NODE_ENV !== "production",
+        synchronize:
+          configService.get<string>("DB_SYNCHRONIZE", "false") === "true" ||
+          process.env.NODE_ENV !== "production",
       }),
     }),
     UsersModule,

@@ -22,13 +22,13 @@ export class PartsController {
     return this.partsService.findOne(id)
   }
 
-  @Roles(UserRole.Admin, UserRole.InventoryManager)
+  @Roles(UserRole.Admin)
   @Post()
   create(@Body() part: Omit<Part, "id">) {
     return this.partsService.create(part)
   }
 
-  @Roles(UserRole.Admin, UserRole.InventoryManager)
+  @Roles(UserRole.Admin)
   @Put(":id")
   update(
     @Param("id", ParseIntPipe) id: number,
@@ -37,7 +37,7 @@ export class PartsController {
     return this.partsService.update(id, part)
   }
 
-  @Roles(UserRole.Admin, UserRole.InventoryManager)
+  @Roles(UserRole.Admin)
   @Delete(":id")
   remove(@Param("id", ParseIntPipe) id: number) {
     return this.partsService.remove(id)

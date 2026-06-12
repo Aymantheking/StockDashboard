@@ -56,6 +56,9 @@ export class User {
   })
   emailVerificationStatus: EmailVerificationStatus
 
+  @Column({ type: "text", default: "" })
+  verificationComment: string
+
   @CreateDateColumn()
   createdAt: Date
 

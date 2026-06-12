@@ -7,6 +7,7 @@ import {
   Division,
 } from "../collaborators/collaborator.entity"
 import { Part } from "../parts/part.entity"
+import { Purchase, PurchaseStatus } from "../purchases/purchase.entity"
 import {
   PartRequest,
   RequestStatus,
@@ -23,16 +24,20 @@ export class AnalyticsService {
     private readonly collaboratorsRepository: Repository<Collaborator>,
     @InjectRepository(PartRequest)
     private readonly requestsRepository: Repository<PartRequest>,
+    @InjectRepository(Purchase)
+    private readonly purchasesRepository: Repository<Purchase>,
     private readonly settingsService: SettingsService
   ) {}
 
   async getSummary() {
-    const [parts, collaborators, requests, lowStockThreshold] = await Promise.all([
-      this.partsRepository.find(),
-      this.collaboratorsRepository.find(),
-      this.requestsRepository.find({ relations: ["part", "collaborator"] }),
-      this.settingsService.getLowStockThreshold(),
-    ])
+    const [parts, collaborators, requests, purchases, lowStockThreshold] =
+      await Promise.all([
+        this.partsRepository.find(),
+        this.collaboratorsRepository.find(),
+        this.requestsRepository.find({ relations: ["part", "collaborator"] }),
+        this.purchasesRepository.find(),
+        this.settingsService.getLowStockThreshold(),
+      ])
 
     const lowStockItems = parts.filter(
       (part) =>
@@ -50,6 +55,7 @@ export class AnalyticsService {
       requests,
       RequestStatus.Borrowed
     )
+    const financialAnalytics = this.getFinancialAnalytics(purchases)
 
     return {
       totalParts: parts.length,
@@ -87,7 +93,115 @@ export class AnalyticsService {
         collaborators,
         operationalRequests
       ),
+      ...financialAnalytics,
     }
+  }
+
+  private getFinancialAnalytics(purchases: Purchase[]) {
+    const receivedPurchases = purchases.filter(
+      (purchase) => purchase.status === PurchaseStatus.Received
+    )
+    const pendingPurchases = purchases.filter((purchase) =>
+      [
+        PurchaseStatus.Pending,
+        PurchaseStatus.Approved,
+        PurchaseStatus.Ordered,
+        PurchaseStatus.InTransit,
+      ].includes(purchase.status)
+    )
+    const now = new Date()
+    const receivedThisMonth = receivedPurchases.filter((purchase) => {
+      const receivedAt = this.getPurchaseReceivedDate(purchase)
+      return (
+        receivedAt.getFullYear() === now.getFullYear() &&
+        receivedAt.getMonth() === now.getMonth()
+      )
+    })
+    const receivedThisYear = receivedPurchases.filter(
+      (purchase) =>
+        this.getPurchaseReceivedDate(purchase).getFullYear() ===
+        now.getFullYear()
+    )
+    const unitPrices = receivedPurchases
+      .map((purchase) => Number(purchase.unitPrice) || 0)
+      .filter((unitPrice) => unitPrice > 0)
+
+    return {
+      currency: "EUR",
+      totalSpent: this.sumPurchaseValues(receivedPurchases),
+      pendingPurchaseValue: this.sumPurchaseValues(pendingPurchases),
+      spentThisMonth: this.sumPurchaseValues(receivedThisMonth),
+      spentThisYear: this.sumPurchaseValues(receivedThisYear),
+      averageUnitPrice:
+        unitPrices.length > 0
+          ? unitPrices.reduce((total, price) => total + price, 0) /
+            unitPrices.length
+          : 0,
+      topExpensivePurchases: receivedPurchases
+        .map((purchase) => ({
+          id: purchase.id,
+          itemName: purchase.itemName,
+          category: purchase.category,
+          supplier: purchase.supplierName || "Unspecified",
+          division: purchase.division,
+          quantity: purchase.quantity,
+          total: this.getPurchaseValue(purchase),
+        }))
+        .sort((left, right) => right.total - left.total)
+        .slice(0, 5),
+      spendingByCategory: this.groupPurchaseSpending(
+        receivedPurchases,
+        (purchase) => purchase.category || "Uncategorized",
+        "category"
+      ),
+      spendingBySupplier: this.groupPurchaseSpending(
+        receivedPurchases,
+        (purchase) => purchase.supplierName || "Unspecified",
+        "supplier"
+      ),
+      spendingByDivision: this.groupPurchaseSpending(
+        receivedPurchases,
+        (purchase) => purchase.division || "Unspecified",
+        "division"
+      ),
+    }
+  }
+
+  private getPurchaseValue(purchase: Purchase) {
+    const totalPrice = Number(purchase.totalPrice) || 0
+    return totalPrice > 0
+      ? totalPrice
+      : (Number(purchase.quantity) || 0) * (Number(purchase.unitPrice) || 0)
+  }
+
+  private sumPurchaseValues(purchases: Purchase[]) {
+    return purchases.reduce(
+      (total, purchase) => total + this.getPurchaseValue(purchase),
+      0
+    )
+  }
+
+  private getPurchaseReceivedDate(purchase: Purchase) {
+    return new Date(purchase.receivedDate || purchase.updatedAt || purchase.createdAt)
+  }
+
+  private groupPurchaseSpending(
+    purchases: Purchase[],
+    getKey: (purchase: Purchase) => string,
+    labelKey: "category" | "supplier" | "division"
+  ) {
+    const totals = purchases.reduce<Record<string, number>>(
+      (spending, purchase) => {
+        const key = getKey(purchase)
+        spending[key] = (spending[key] || 0) + this.getPurchaseValue(purchase)
+        return spending
+      },
+      {}
+    )
+
+    return Object.entries(totals)
+      .map(([label, total]) => ({ [labelKey]: label, total }))
+      .sort((left, right) => right.total - left.total)
   }
 
   private countStatus(requests: PartRequest[], status: RequestStatus) {

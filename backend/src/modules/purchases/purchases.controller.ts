@@ -96,7 +96,7 @@ export class PurchasesController {
     return this.purchasesService.receive(id, body, request.user)
   }
 
-  @Roles(UserRole.Admin)
+  @Roles(UserRole.Admin, UserRole.InventoryManager)
   @Put(":id/cancel")
   cancel(
     @Param("id", ParseIntPipe) id: number,
@@ -108,7 +108,10 @@ export class PurchasesController {
 
   @Roles(UserRole.Admin)
   @Delete(":id")
-  remove(@Param("id", ParseIntPipe) id: number) {
-    return this.purchasesService.remove(id)
+  remove(
+    @Param("id", ParseIntPipe) id: number,
+    @Req() request: AuthenticatedRequest
+  ) {
+    return this.purchasesService.remove(id, request.user)
   }
 }

@@ -107,7 +107,8 @@ export class UsersService implements OnModuleInit {
 
   async updateVerificationStatus(
     id: number,
-    emailVerificationStatus: EmailVerificationStatus
+    emailVerificationStatus: EmailVerificationStatus,
+    verificationComment = ""
   ) {
     if (!Object.values(EmailVerificationStatus).includes(emailVerificationStatus)) {
       throw new BadRequestException("Email verification status is invalid")
@@ -115,6 +116,10 @@ export class UsersService implements OnModuleInit {
 
     const user = await this.findById(id)
     user.emailVerificationStatus = emailVerificationStatus
+    user.verificationComment =
+      emailVerificationStatus === EmailVerificationStatus.Rejected
+        ? verificationComment.trim()
+        : ""
 
     return this.usersRepository.save(user)
   }

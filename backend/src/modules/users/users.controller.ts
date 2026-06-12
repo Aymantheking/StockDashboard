@@ -40,10 +40,14 @@ export class UsersController {
   }
 
   @Put(":id/reject")
-  async rejectUser(@Param("id", ParseIntPipe) id: number) {
+  async rejectUser(
+    @Param("id", ParseIntPipe) id: number,
+    @Body() body: { verificationComment?: string }
+  ) {
     const user = await this.usersService.updateVerificationStatus(
       id,
-      EmailVerificationStatus.Rejected
+      EmailVerificationStatus.Rejected,
+      body.verificationComment || ""
     )
     return this.usersService.toPublicUser(user)
   }

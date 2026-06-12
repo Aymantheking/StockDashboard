@@ -1,1 +1,1 @@
-export { endpoints } from "../../shared/api/endpoints"
+export { collaboratorApi } from "../../services/api/collaboratorApi"

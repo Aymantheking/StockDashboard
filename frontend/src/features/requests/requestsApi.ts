@@ -1,1 +1,1 @@
-export { endpoints } from "../../shared/api/endpoints"
+export { requestApi } from "../../services/api/requestApi"

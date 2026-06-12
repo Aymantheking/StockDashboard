@@ -1,7 +1,5 @@
 import { useEffect, useState } from "react"
 import { Eye, Pencil, Trash2 } from "lucide-react"
-import type { ApiFetch } from "../../shared/api/apiClient"
-import { endpoints } from "../../shared/api/endpoints"
 import { BulkActionBar as BulkToolbar } from "../../shared/components/BulkActionBar"
 import { ConfirmModal as BulkConfirmModal } from "../../shared/components/ConfirmModal"
 import { FilterPanel } from "../../shared/components/FilterPanel"
@@ -23,8 +21,8 @@ import type {
 import type { AuthUser } from "../auth/authTypes"
 import type { PartRequest } from "../requests/requestsTypes"
 import type { Collaborator, RatingHistoryItem } from "./collaboratorsTypes"
+import { collaboratorApi } from "../../services/api/collaboratorApi"
 
-const COLLABORATORS_API_URL = endpoints.collaborators
 const divisions: Division[] = [
   "Division 1",
   "Division 2",
@@ -44,7 +42,6 @@ export function CollaboratorsPage({
   collaboratorsError,
   partRequests,
   users,
-  apiFetch,
   reloadCollaborators,
   reloadAnalytics,
   setCollaboratorsError,
@@ -56,7 +53,6 @@ export function CollaboratorsPage({
   collaboratorsError: string | null
   partRequests: PartRequest[]
   users: AuthUser[]
-  apiFetch: ApiFetch
   reloadCollaborators: () => Promise<void>
   reloadAnalytics: () => Promise<void>
   setCollaboratorsError: React.Dispatch<React.SetStateAction<string | null>>
@@ -109,13 +105,7 @@ export function CollaboratorsPage({
     try {
       setCollaboratorsError(null)
 
-      const response = await apiFetch(`${COLLABORATORS_API_URL}/${id}`, {
-        method: "DELETE",
-      })
-
-      if (!response.ok) {
-        throw new Error("Failed to delete collaborator")
-      }
+      await collaboratorApi.remove(id)
 
       await reloadCollaborators()
       await reloadAnalytics()
@@ -130,23 +120,10 @@ export function CollaboratorsPage({
     try {
       setCollaboratorsError(null)
 
-      const response = await apiFetch(
-        editingCollaborator ? `${COLLABORATORS_API_URL}/${id}` : COLLABORATORS_API_URL,
-        {
-          method: editingCollaborator ? "PUT" : "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify(collaboratorPayload),
-        }
-      )
-
-      if (!response.ok) {
-        throw new Error(
-          editingCollaborator
-            ? "Failed to update collaborator"
-            : "Failed to create collaborator"
-        )
+      if (editingCollaborator) {
+        await collaboratorApi.update(id, collaboratorPayload)
+      } else {
+        await collaboratorApi.create(collaboratorPayload)
       }
 
       await reloadCollaborators()
@@ -165,14 +142,11 @@ export function CollaboratorsPage({
   async function handleBulkDeleteCollaborators() {
     try {
       setCollaboratorsError(null)
-      const responses = await Promise.all(
+      await Promise.all(
         [...collaboratorSelection.selectedIds].map((id) =>
-          apiFetch(`${COLLABORATORS_API_URL}/${id}`, { method: "DELETE" })
+          collaboratorApi.remove(id)
         )
       )
-      if (responses.some((response) => !response.ok)) {
-        throw new Error("Failed to delete selected collaborators")
-      }
       await reloadCollaborators()
       await reloadAnalytics()
       collaboratorSelection.clear()
@@ -401,7 +375,6 @@ export function CollaboratorsPage({
       {ratingHistoryCollaborator && (
         <RatingHistoryModal
           collaborator={ratingHistoryCollaborator}
-          apiFetch={apiFetch}
           reloadCollaborators={reloadCollaborators}
           onClose={() => setRatingHistoryCollaborator(null)}
         />
@@ -442,12 +415,10 @@ function StarRating({ rating }: { rating: number }) {
 
 function RatingHistoryModal({
   collaborator,
-  apiFetch,
   reloadCollaborators,
   onClose,
 }: {
   collaborator: Collaborator
-  apiFetch: ApiFetch
   reloadCollaborators: () => Promise<void>
   onClose: () => void
 }) {
@@ -461,15 +432,7 @@ function RatingHistoryModal({
   useEffect(() => {
     async function loadHistory() {
       try {
-        const response = await apiFetch(
-          `${COLLABORATORS_API_URL}/${collaborator.id}/rating-history`
-        )
-
-        if (!response.ok) {
-          throw new Error("Failed to load rating history")
-        }
-
-        setHistory((await response.json()) as RatingHistoryItem[])
+        setHistory(await collaboratorApi.ratingHistory(collaborator.id))
       } catch {
         setError("Failed to load rating history")
       }
@@ -481,23 +444,11 @@ function RatingHistoryModal({
   async function saveRating() {
     try {
       setError("")
-      const response = await apiFetch(
-        `${COLLABORATORS_API_URL}/${collaborator.id}/rating`,
-        {
-          method: "PUT",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            rating,
-            reason: reason || "Manual rating adjustment",
-          }),
-        }
+      await collaboratorApi.adjustRating(
+        collaborator.id,
+        rating,
+        reason || "Manual rating adjustment"
       )
-
-      if (!response.ok) {
-        throw new Error("Failed to update rating")
-      }
 
       await reloadCollaborators()
       onClose()

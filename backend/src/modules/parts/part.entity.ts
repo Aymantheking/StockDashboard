@@ -22,7 +22,7 @@ export class Part {
   @Column({ default: "" })
   manufacturer: string
 
-  @Column()
+  @Column({ default: "" })
   reference: string
 
   @Column({ type: "int", default: 0 })
@@ -48,6 +48,9 @@ export class Part {
 
   @Column({ default: "", type: "text" })
   description: string
+
+  @Column({ default: "", type: "text" })
+  imageData: string
 
   @Column({ default: "", type: "text" })
   stockAllocationNote: string

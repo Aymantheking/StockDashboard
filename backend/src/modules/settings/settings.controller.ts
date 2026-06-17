@@ -28,4 +28,33 @@ export class SettingsController {
       Number(body.lowStockThreshold)
     )
   }
+
+  @Roles(UserRole.Admin)
+  @Put("rating-rules")
+  updateRatingRules(
+    @Body()
+    body: {
+      lateReturnPenaltyStars: number
+      damagedItemPenaltyStars: number
+    }
+  ) {
+    return this.settingsService.updateRatingRules({
+      lateReturnPenaltyStars: Number(body.lateReturnPenaltyStars),
+      damagedItemPenaltyStars: Number(body.damagedItemPenaltyStars),
+    })
+  }
+
+  @Roles(UserRole.Admin)
+  @Put("stock-locations")
+  updateStockLocations(@Body() body: { stockLocations: string[] }) {
+    return this.settingsService.updateStockLocations(body.stockLocations || [])
+  }
+
+  @Roles(UserRole.Admin)
+  @Put("inventory-categories")
+  updateInventoryCategories(@Body() body: { inventoryCategories: string[] }) {
+    return this.settingsService.updateInventoryCategories(
+      body.inventoryCategories || []
+    )
+  }
 }

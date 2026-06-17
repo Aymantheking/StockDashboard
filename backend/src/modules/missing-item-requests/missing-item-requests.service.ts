@@ -16,6 +16,11 @@ import { RequestStatus } from "../requests/part-request.entity"
 import { NotificationType } from "../notifications/notification.entity"
 import { NotificationsService } from "../notifications/notifications.service"
 import { UserRole } from "../users/user.entity"
+import {
+  Purchase,
+  PurchasePriority,
+  PurchaseStatus,
+} from "../purchases/purchase.entity"
 import { MissingItemRequest } from "./missing-item-request.entity"
 
 type CreateMissingItemRequestInput = {
@@ -36,6 +41,8 @@ export class MissingItemRequestsService {
     private readonly missingItemRequestsRepository: Repository<MissingItemRequest>,
     @InjectRepository(Collaborator)
     private readonly collaboratorsRepository: Repository<Collaborator>,
+    @InjectRepository(Purchase)
+    private readonly purchasesRepository: Repository<Purchase>,
     private readonly notificationsService: NotificationsService
   ) {}
 
@@ -107,12 +114,28 @@ export class MissingItemRequestsService {
     request.managerComment = managerComment
 
     const savedRequest = await this.missingItemRequestsRepository.save(request)
+    const purchase = await this.createPurchaseFromApprovedMissingItem(
+      savedRequest,
+      user
+    )
     await this.notificationsService.resolveActionable("Requests", request.id)
+    await this.notificationsService.notifyAdmins(
+      {
+        title: "New purchase request",
+        message: `New purchase request from ${user.name || user.email}`,
+        type: NotificationType.PurchaseRequestCreated,
+        targetPage: "Purchase",
+        targetSection: "PurchaseRequests",
+        targetId: purchase.id,
+        isActionable: true,
+      },
+      user.id
+    )
     await this.notificationsService.notifyCollaboratorEmail(
       request.collaborator?.email,
       {
         title: "Missing item request approved",
-        message: `Your request for ${request.itemName} was approved.`,
+        message: "Your missing item request was approved",
         type: NotificationType.MissingItemRequestApproved,
         targetPage: "My Requests",
         targetSection: "MyMissingItemRequests",
@@ -139,7 +162,7 @@ export class MissingItemRequestsService {
       request.collaborator?.email,
       {
         title: "Missing item request rejected",
-        message: `Your request for ${request.itemName} was rejected.${managerComment ? ` ${managerComment}` : ""}`,
+        message: "Your missing item request was rejected",
         type: NotificationType.MissingItemRequestRejected,
         targetPage: "My Requests",
         targetSection: "MyMissingItemRequests",
@@ -147,6 +170,36 @@ export class MissingItemRequestsService {
       }
     )
     return savedRequest
+  }
+
+  private async createPurchaseFromApprovedMissingItem(
+    request: MissingItemRequest,
+    user: AuthenticatedUser
+  ) {
+    const purchase = this.purchasesRepository.create({
+      itemName: request.itemName,
+      category: request.category,
+      manufacturer: request.manufacturer || "",
+      reference: request.reference || "",
+      quantity: request.quantityNeeded,
+      reason: request.reason,
+      priority: PurchasePriority.Medium,
+      status: PurchaseStatus.Pending,
+      requestedById: user.id,
+      sourcePartId: request.partId || null,
+      sourceMissingItemRequestId: request.id,
+      division: request.collaborator.division,
+      supplierName: "",
+      supplierContact: "",
+      unitPrice: 0,
+      totalPrice: 0,
+      expectedArrivalDate: null,
+      receivedDate: null,
+      adminComment: "",
+      lastReminderAt: null,
+    })
+
+    return this.purchasesRepository.save(purchase)
   }
 
   private async findOne(id: number) {

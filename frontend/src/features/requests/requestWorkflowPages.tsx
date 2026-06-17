@@ -38,6 +38,60 @@ import { requestApi } from "../../services/api/requestApi"
 
 const divisions: Division[] = ["Division 1", "Division 2", "Division 3", "Division 4", "Admin"]
 const collaboratorGroups: CollaboratorGroup[] = ["Group 1", "Group 2", "Group 3", "Group 4"]
+export const missingItemCategories = [
+  "Microprocessors",
+  "Microcontrollers",
+  "PCBs",
+  "Sensors",
+  "Actuators",
+  "Development Boards",
+  "Communication Modules",
+  "Connectors",
+  "Cables",
+  "Power Modules",
+  "Test Equipment",
+  "Tools",
+  "Other",
+]
+
+type MissingItemRequestInput = {
+  partId?: number | null
+  itemName: string
+  category: string
+  manufacturer: string
+  reference: string
+  quantityNeeded: number
+  reason: string
+  neededDate: string
+}
+
+function getApiErrorMessage(error: unknown, fallback: string) {
+  if (
+    typeof error === "object" &&
+    error !== null &&
+    "response" in error &&
+    typeof (error as { response?: unknown }).response === "object" &&
+    (error as { response?: unknown }).response !== null
+  ) {
+    const data = (
+      error as {
+        response?: { data?: { message?: string | string[]; error?: string } }
+      }
+    ).response?.data
+    if (Array.isArray(data?.message)) {
+      return data.message.join(", ")
+    }
+    if (data?.message) {
+      return data.message
+    }
+    if (data?.error) {
+      return data.error
+    }
+  }
+
+  return fallback
+}
+
 function getRequestStartDate(request: PartRequest) {
   return request.requestType === "Reservation"
     ? request.usageDate || request.expectedReturnDate
@@ -91,6 +145,7 @@ export function RequestsPage({
   isLoadingRequests,
   requestsError,
   reloadParts,
+  reloadPurchases,
   reloadRequests,
   reloadAnalytics,
   setRequestsError,
@@ -103,6 +158,7 @@ export function RequestsPage({
   isLoadingRequests: boolean
   requestsError: string | null
   reloadParts: () => Promise<void>
+  reloadPurchases: () => Promise<void>
   reloadRequests: () => Promise<void>
   reloadAnalytics: () => Promise<void>
   setRequestsError: React.Dispatch<React.SetStateAction<string | null>>
@@ -251,6 +307,7 @@ export function RequestsPage({
       await requestApi.missingAction(id, action, managerComment)
 
       await reloadRequests()
+      await reloadPurchases()
       await reloadNotificationSummary()
       setPendingMissingAction(null)
       setViewingRequestDetails(null)
@@ -401,7 +458,7 @@ export function RequestsPage({
                 onClick={() =>
                   setBulkRequestAction({ target: "part", action: "approve" })
                 }
-                className="rounded bg-green-600 px-3 py-2 text-sm font-semibold text-white"
+                className="rounded bg-yellow-400 px-3 py-2 text-sm font-semibold text-black"
               >
                 Approve selected pending
               </button>
@@ -503,7 +560,7 @@ export function RequestsPage({
                                 action: "approve",
                               })
                             }
-                            tone="green"
+                            tone="yellow"
                           />
                           <IconButton
                             icon={<XCircle className="h-4 w-4" />}
@@ -569,7 +626,7 @@ export function RequestsPage({
                 onClick={() =>
                   setBulkRequestAction({ target: "missing", action: "approve" })
                 }
-                className="rounded bg-green-600 px-3 py-2 text-sm font-semibold text-white"
+                className="rounded bg-yellow-400 px-3 py-2 text-sm font-semibold text-black"
               >
                 Approve selected pending
               </button>
@@ -636,9 +693,9 @@ export function RequestsPage({
                   {request.collaborator?.name || "Unknown"}
                 </td>
                 <td className="px-3 py-4">{request.itemName}</td>
-                <td className="px-3 py-4">{request.category}</td>
-                <td className="px-3 py-4">{request.manufacturer || "-"}</td>
-                <td className="px-3 py-4">{request.reference || "-"}</td>
+                <td className="px-3 py-4">{request.category || "N/A"}</td>
+                <td className="px-3 py-4">{request.manufacturer || "N/A"}</td>
+                <td className="px-3 py-4">{request.reference || "N/A"}</td>
                 <td className="px-3 py-4">{request.quantityNeeded}</td>
                 <td className="whitespace-nowrap px-3 py-4 text-sm text-gray-600">
                   {formatRequestedAt(request.createdAt)}
@@ -673,7 +730,7 @@ export function RequestsPage({
                                 action: "approve",
                               })
                             }
-                            tone="green"
+                            tone="yellow"
                           />
                           <IconButton
                             icon={<XCircle className="h-4 w-4" />}
@@ -734,7 +791,7 @@ export function RequestsPage({
               ? "Approve selected"
               : "Reject selected"
           }
-          tone={bulkRequestAction.action === "approve" ? "green" : "red"}
+          tone={bulkRequestAction.action === "approve" ? "yellow" : "red"}
           commentLabel={
             bulkRequestAction.action === "reject"
               ? "Shared rejection comment"
@@ -826,6 +883,7 @@ export function MyRequestsPage({
   setRequestsError,
   highlightTarget,
   reloadNotificationSummary,
+  inventoryCategories = missingItemCategories,
 }: {
   partRequests: PartRequest[]
   missingItemRequests: MissingItemRequest[]
@@ -839,6 +897,7 @@ export function MyRequestsPage({
     targetId?: number
   } | null
   reloadNotificationSummary: () => Promise<void>
+  inventoryCategories?: string[]
 }) {
   const [isMissingItemModalOpen, setIsMissingItemModalOpen] = useState(false)
   const [declaringReturnRequest, setDeclaringReturnRequest] =
@@ -857,15 +916,7 @@ export function MyRequestsPage({
     missingPage
   )
 
-  async function handleMissingItemRequest(input: {
-    itemName: string
-    category: string
-    manufacturer: string
-    reference: string
-    quantityNeeded: number
-    reason: string
-    neededDate: string
-  }) {
+  async function handleMissingItemRequest(input: MissingItemRequestInput) {
     try {
       setRequestsError(null)
 
@@ -873,9 +924,9 @@ export function MyRequestsPage({
 
       await reloadRequests()
       await reloadNotificationSummary()
-      setIsMissingItemModalOpen(false)
-    } catch {
-      setRequestsError("Failed to submit missing item request")
+      return null
+    } catch (error) {
+      return getApiErrorMessage(error, "Failed to submit missing item request")
     }
   }
 
@@ -1105,6 +1156,7 @@ export function MyRequestsPage({
 
       {isMissingItemModalOpen && (
         <MissingItemRequestModal
+          inventoryCategories={inventoryCategories}
           onClose={() => setIsMissingItemModalOpen(false)}
           onSave={handleMissingItemRequest}
         />
@@ -1715,12 +1767,12 @@ function StatusPill({ status }: { status: RequestStatus }) {
     Pending: { bg: "bg-yellow-100", text: "text-yellow-800" },
     Approved: { bg: "bg-green-100", text: "text-green-800" },
     Rejected: { bg: "bg-red-100", text: "text-red-800" },
-    Reserved: { bg: "bg-blue-100", text: "text-blue-800" },
-    Borrowed: { bg: "bg-indigo-100", text: "text-indigo-800" },
-    "Return Pending": { bg: "bg-orange-100", text: "text-orange-800" },
-    Returned: { bg: "bg-gray-100", text: "text-gray-800" },
-    Damaged: { bg: "bg-red-200", text: "text-red-900" },
-    Cancelled: { bg: "bg-gray-200", text: "text-gray-800" },
+    Reserved: { bg: "bg-orange-100", text: "text-orange-800" },
+    Borrowed: { bg: "bg-blue-100", text: "text-blue-800" },
+    "Return Pending": { bg: "bg-purple-100", text: "text-purple-800" },
+    Returned: { bg: "bg-green-100", text: "text-green-800" },
+    Damaged: { bg: "bg-red-100", text: "text-red-800" },
+    Cancelled: { bg: "bg-gray-100", text: "text-gray-800" },
   }
 
   const colors = statusColors[status] || statusColors.Pending
@@ -1737,6 +1789,7 @@ function ActionCommentModal({
   message,
   confirmLabel,
   isCommentRequired = false,
+  tone,
   onClose,
   onConfirm,
 }: {
@@ -1744,10 +1797,24 @@ function ActionCommentModal({
   message: string
   confirmLabel: string
   isCommentRequired?: boolean
+  tone?: "yellow" | "green" | "red"
   onClose: () => void
   onConfirm: (comment: string) => void | Promise<void>
 }) {
   const [comment, setComment] = useState("")
+  const normalizedLabel = confirmLabel.toLowerCase()
+  const effectiveTone =
+    tone ||
+    (normalizedLabel.includes("reject") || normalizedLabel.includes("damage")
+      ? "red"
+      : normalizedLabel.includes("return")
+        ? "green"
+        : "yellow")
+  const toneClasses = {
+    yellow: "bg-yellow-400 text-black hover:bg-yellow-500",
+    green: "bg-green-600 text-white hover:bg-green-700",
+    red: "bg-red-600 text-white hover:bg-red-700",
+  }
 
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
@@ -1775,7 +1842,7 @@ function ActionCommentModal({
               onClose()
             }}
             disabled={isCommentRequired && !comment.trim()}
-            className="px-4 py-2 bg-blue-600 text-white rounded disabled:opacity-50 disabled:cursor-not-allowed hover:bg-blue-700"
+            className={`px-4 py-2 rounded font-semibold disabled:opacity-50 disabled:cursor-not-allowed ${toneClasses[effectiveTone]}`}
           >
             {confirmLabel}
           </button>
@@ -1816,7 +1883,7 @@ function RequestDetailsModal({
               </div>
               <div>
                 <p className="text-sm text-gray-600">Category</p>
-                <p className="font-semibold">{request.category}</p>
+                <p className="font-semibold">{request.category || "N/A"}</p>
               </div>
               <div>
                 <p className="text-sm text-gray-600">Quantity Needed</p>
@@ -1828,11 +1895,11 @@ function RequestDetailsModal({
               </div>
               <div>
                 <p className="text-sm text-gray-600">Manufacturer</p>
-                <p className="font-semibold">{request.manufacturer || "-"}</p>
+                <p className="font-semibold">{request.manufacturer || "N/A"}</p>
               </div>
               <div>
                 <p className="text-sm text-gray-600">Reference</p>
-                <p className="font-semibold">{request.reference || "-"}</p>
+                <p className="font-semibold">{request.reference || "N/A"}</p>
               </div>
             </>
           ) : (
@@ -1891,7 +1958,7 @@ function RequestDetailsModal({
               </button>
               <button
                 onClick={() => setShowApproveComment(true)}
-                className="px-4 py-2 bg-green-600 text-white rounded hover:bg-green-700"
+                className="px-4 py-2 bg-yellow-400 text-black font-semibold rounded hover:bg-yellow-500"
               >
                 Approve
               </button>
@@ -1911,6 +1978,7 @@ function RequestDetailsModal({
           title="Approve Request"
           message="Add approval comment (optional)"
           confirmLabel="Approve"
+          tone="yellow"
           onClose={() => setShowApproveComment(false)}
           onConfirm={(comment) => {
             onApprove(comment)
@@ -1924,6 +1992,7 @@ function RequestDetailsModal({
           title="Reject Request"
           message="Add rejection reason (optional)"
           confirmLabel="Reject"
+          tone="red"
           onClose={() => setShowRejectComment(false)}
           onConfirm={(comment) => {
             onReject(comment)
@@ -2104,37 +2173,86 @@ function ReturnReportModal({
   )
 }
 
-function MissingItemRequestModal({
+export function MissingItemRequestModal({
+  initialValues,
+  lockIdentityFields = false,
+  inventoryCategories = missingItemCategories,
   onClose,
   onSave,
 }: {
+  initialValues?: Partial<MissingItemRequestInput>
+  lockIdentityFields?: boolean
+  inventoryCategories?: string[]
   onClose: () => void
-  onSave: (input: {
-    itemName: string
-    category: string
-    manufacturer: string
-    reference: string
-    quantityNeeded: number
-    reason: string
-    neededDate: string
-  }) => void | Promise<void>
+  onSave: (input: MissingItemRequestInput) => string | null | void | Promise<string | null | void>
 }) {
   const [form, setForm] = useState({
-    itemName: "",
-    category: "",
-    manufacturer: "",
-    reference: "",
-    quantityNeeded: 1,
-    reason: "",
-    neededDate: "",
+    partId: initialValues?.partId ?? null,
+    itemName: initialValues?.itemName ?? "",
+    category: initialValues?.category ?? "",
+    manufacturer: initialValues?.manufacturer ?? "",
+    reference: initialValues?.reference ?? "",
+    quantityNeeded: initialValues?.quantityNeeded ?? 1,
+    reason: initialValues?.reason ?? "",
+    neededDate: initialValues?.neededDate ?? "",
   })
+  const [errors, setErrors] = useState<Record<string, string>>({})
+  const [submitError, setSubmitError] = useState("")
+  const [isSubmitting, setIsSubmitting] = useState(false)
+  const baseCategoryOptions = [...new Set([...inventoryCategories, "Other"])]
+  const categoryOptions =
+    form.category && !baseCategoryOptions.includes(form.category)
+      ? [form.category, ...baseCategoryOptions]
+      : baseCategoryOptions
 
-  const isValid =
-    form.itemName.trim() &&
-    form.category &&
-    form.quantityNeeded > 0 &&
-    form.neededDate &&
-    !isPastDate(form.neededDate)
+  function validate() {
+    const nextErrors: Record<string, string> = {}
+
+    if (!form.itemName.trim()) {
+      nextErrors.itemName = "Item name is required"
+    }
+    if (!form.category) {
+      nextErrors.category = "Category is required"
+    }
+    if (!Number.isInteger(Number(form.quantityNeeded)) || form.quantityNeeded < 1) {
+      nextErrors.quantityNeeded = "Quantity must be at least 1"
+    }
+    if (!form.neededDate) {
+      nextErrors.neededDate = "Needed date is required"
+    } else if (isPastDate(form.neededDate)) {
+      nextErrors.neededDate = "Needed date cannot be in the past"
+    }
+    if (!form.reason.trim()) {
+      nextErrors.reason = "Reason is required"
+    }
+
+    setErrors(nextErrors)
+    return Object.keys(nextErrors).length === 0
+  }
+
+  async function submit() {
+    setSubmitError("")
+    if (!validate()) {
+      return
+    }
+
+    setIsSubmitting(true)
+    const error = await onSave({
+      ...form,
+      itemName: form.itemName.trim(),
+      manufacturer: form.manufacturer.trim(),
+      reference: form.reference.trim(),
+      reason: form.reason.trim(),
+    })
+    setIsSubmitting(false)
+
+    if (error) {
+      setSubmitError(error)
+      return
+    }
+
+    onClose()
+  }
 
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
@@ -2142,62 +2260,92 @@ function MissingItemRequestModal({
         <h3 className="text-2xl font-bold mb-6">Request Missing Item</h3>
 
         <div className="space-y-4 mb-6">
-          <input
-            type="text"
-            placeholder="Item Name"
-            value={form.itemName}
-            onChange={(e) => setForm({ ...form, itemName: e.target.value })}
-            className="w-full border rounded px-4 py-2"
-          />
+          <div>
+            <input
+              type="text"
+              placeholder="Item Name"
+              value={form.itemName}
+              readOnly={lockIdentityFields}
+              onChange={(e) => setForm({ ...form, itemName: e.target.value })}
+              className="w-full border rounded px-4 py-2 read-only:cursor-not-allowed read-only:bg-gray-100 read-only:text-gray-600"
+            />
+            {errors.itemName && <p className="mt-1 text-sm text-red-600">{errors.itemName}</p>}
+          </div>
 
-          <input
-            type="text"
-            placeholder="Category"
-            value={form.category}
-            onChange={(e) => setForm({ ...form, category: e.target.value })}
-            className="w-full border rounded px-4 py-2"
-          />
+          <div>
+            <select
+              value={form.category}
+              disabled={lockIdentityFields}
+              onChange={(e) => setForm({ ...form, category: e.target.value })}
+              className="w-full border rounded px-4 py-2 disabled:cursor-not-allowed disabled:bg-gray-100 disabled:text-gray-600"
+            >
+              <option value="">Select category</option>
+              {categoryOptions.map((category) => (
+                <option key={category} value={category}>
+                  {category}
+                </option>
+              ))}
+            </select>
+            {errors.category && <p className="mt-1 text-sm text-red-600">{errors.category}</p>}
+          </div>
 
           <input
             type="text"
             placeholder="Manufacturer (optional)"
             value={form.manufacturer}
+            readOnly={lockIdentityFields}
             onChange={(e) => setForm({ ...form, manufacturer: e.target.value })}
-            className="w-full border rounded px-4 py-2"
+            className="w-full border rounded px-4 py-2 read-only:cursor-not-allowed read-only:bg-gray-100 read-only:text-gray-600"
           />
 
           <input
             type="text"
             placeholder="Reference (optional)"
             value={form.reference}
+            readOnly={lockIdentityFields}
             onChange={(e) => setForm({ ...form, reference: e.target.value })}
-            className="w-full border rounded px-4 py-2"
+            className="w-full border rounded px-4 py-2 read-only:cursor-not-allowed read-only:bg-gray-100 read-only:text-gray-600"
           />
 
-          <input
-            type="number"
-            min={1}
-            placeholder="Quantity Needed"
-            value={form.quantityNeeded}
-            onChange={(e) => setForm({ ...form, quantityNeeded: Number(e.target.value) })}
-            className="w-full border rounded px-4 py-2"
-          />
+          <div>
+            <input
+              type="number"
+              min={1}
+              placeholder="Quantity Needed"
+              value={form.quantityNeeded}
+              onChange={(e) => setForm({ ...form, quantityNeeded: Number(e.target.value) })}
+              className="w-full border rounded px-4 py-2"
+            />
+            {errors.quantityNeeded && <p className="mt-1 text-sm text-red-600">{errors.quantityNeeded}</p>}
+          </div>
 
-          <input
-            type="date"
-            min={getTodayDate()}
-            value={form.neededDate}
-            onChange={(e) => setForm({ ...form, neededDate: e.target.value })}
-            className="w-full border rounded px-4 py-2"
-          />
+          <div>
+            <input
+              type="date"
+              min={getTodayDate()}
+              value={form.neededDate}
+              onChange={(e) => setForm({ ...form, neededDate: e.target.value })}
+              className="w-full border rounded px-4 py-2"
+            />
+            {errors.neededDate && <p className="mt-1 text-sm text-red-600">{errors.neededDate}</p>}
+          </div>
 
-          <textarea
-            placeholder="Reason for request"
-            value={form.reason}
-            onChange={(e) => setForm({ ...form, reason: e.target.value })}
-            className="w-full border rounded px-4 py-2 h-20 resize-none"
-          />
+          <div>
+            <textarea
+              placeholder="Reason for request"
+              value={form.reason}
+              onChange={(e) => setForm({ ...form, reason: e.target.value })}
+              className="w-full border rounded px-4 py-2 h-20 resize-none"
+            />
+            {errors.reason && <p className="mt-1 text-sm text-red-600">{errors.reason}</p>}
+          </div>
         </div>
+
+        {submitError && (
+          <div className="mb-4 rounded border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+            {submitError}
+          </div>
+        )}
 
         <div className="flex justify-end gap-3">
           <button
@@ -2207,14 +2355,11 @@ function MissingItemRequestModal({
             Cancel
           </button>
           <button
-            onClick={() => {
-              onSave(form)
-              onClose()
-            }}
-            disabled={!isValid}
+            onClick={submit}
+            disabled={isSubmitting}
             className="px-4 py-2 bg-yellow-400 text-black font-semibold rounded disabled:opacity-50 disabled:cursor-not-allowed hover:bg-yellow-500"
           >
-            Submit Request
+            {isSubmitting ? "Submitting..." : "Submit Request"}
           </button>
         </div>
       </div>
@@ -2314,7 +2459,7 @@ function DeclareReturnModal({
               onClose()
             }}
             disabled={totalQuantity !== request.quantity}
-            className="px-4 py-2 bg-blue-600 text-white rounded disabled:opacity-50 disabled:cursor-not-allowed hover:bg-blue-700"
+            className="px-4 py-2 bg-green-600 text-white rounded disabled:opacity-50 disabled:cursor-not-allowed hover:bg-green-700"
           >
             Declare Return
           </button>

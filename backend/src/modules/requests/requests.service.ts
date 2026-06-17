@@ -16,6 +16,7 @@ import { RatingHistory } from "../collaborators/rating-history.entity"
 import { Part } from "../parts/part.entity"
 import { NotificationType } from "../notifications/notification.entity"
 import { NotificationsService } from "../notifications/notifications.service"
+import { SettingsService } from "../settings/settings.service"
 import { UserRole } from "../users/user.entity"
 import { PartRequest, RequestStatus, RequestType } from "./part-request.entity"
 
@@ -54,7 +55,8 @@ export class RequestsService {
     private readonly collaboratorsRepository: Repository<Collaborator>,
     @InjectRepository(RatingHistory)
     private readonly ratingHistoryRepository: Repository<RatingHistory>,
-    private readonly notificationsService: NotificationsService
+    private readonly notificationsService: NotificationsService,
+    private readonly settingsService: SettingsService
   ) {}
 
   async findAll(user: AuthenticatedUser) {
@@ -602,13 +604,19 @@ export class RequestsService {
       return
     }
 
-    const penalty = (hasDamage ? -1 : 0) + (isLate ? -0.5 : 0)
+    const ratingRules = await this.settingsService.getRatingRules()
+    const damagedPenalty =
+      (request.confirmedDamagedQuantity || 0) *
+      ratingRules.damagedItemPenaltyStars
+    const latePenalty = isLate ? ratingRules.lateReturnPenaltyStars : 0
+    const totalPenalty = damagedPenalty + latePenalty
+    const penalty = -totalPenalty
     const reason =
       hasDamage && isLate
-        ? "Damaged and late return: -1.5"
+        ? `Damaged and late return: -${totalPenalty}`
         : hasDamage
-          ? "Damaged return: -1"
-          : "Late return: -0.5"
+          ? `Damaged return: -${damagedPenalty}`
+          : `Late return: -${latePenalty}`
 
     await this.adjustCollaboratorRating(
       request.collaborator,

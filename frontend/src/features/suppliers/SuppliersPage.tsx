@@ -44,6 +44,7 @@ export function SuppliersPage({
     useState<FilterMatchMode>("all")
   const [isModalOpen, setIsModalOpen] = useState(false)
   const [editingSupplier, setEditingSupplier] = useState<Supplier | null>(null)
+  const [deletingSupplier, setDeletingSupplier] = useState<Supplier | null>(null)
   const [isBulkDeleteOpen, setIsBulkDeleteOpen] = useState(false)
   const [page, setPage] = useState(1)
 
@@ -267,7 +268,7 @@ export function SuppliersPage({
                         <IconButton
                           icon={<Trash2 className="h-4 w-4" />}
                           label="Delete supplier"
-                          onClick={() => handleDelete(supplier.id)}
+                          onClick={() => setDeletingSupplier(supplier)}
                           tone="red"
                         />
                       )}
@@ -315,6 +316,18 @@ export function SuppliersPage({
           confirmLabel="Delete selected"
           onClose={() => setIsBulkDeleteOpen(false)}
           onConfirm={handleBulkDeleteSuppliers}
+        />
+      )}
+      {deletingSupplier && (
+        <BulkConfirmModal
+          title={`Delete ${deletingSupplier.name}?`}
+          message={`Delete supplier ${deletingSupplier.name}?`}
+          confirmLabel="Delete"
+          onClose={() => setDeletingSupplier(null)}
+          onConfirm={async () => {
+            await handleDelete(deletingSupplier.id)
+            setDeletingSupplier(null)
+          }}
         />
       )}
     </>

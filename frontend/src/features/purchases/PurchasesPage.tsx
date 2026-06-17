@@ -125,6 +125,10 @@ export function PurchasesPage({
   const [receiveValidationErrors, setReceiveValidationErrors] = useState<
     string[]
   >([])
+  const [confirmingPurchaseAction, setConfirmingPurchaseAction] = useState<{
+    purchase: Purchase
+    action: "cancel" | "delete"
+  } | null>(null)
   const [reportPurchase, setReportPurchase] = useState<Purchase | null>(null)
   const [page, setPage] = useState(1)
   const [search, setSearch] = useState("")
@@ -554,7 +558,7 @@ export function PurchasesPage({
             ) && (
             <button
               onClick={() => setBulkAction("approve")}
-              className="rounded bg-green-600 px-3 py-2 text-sm font-semibold text-white"
+              className="rounded bg-yellow-400 px-3 py-2 text-sm font-semibold text-black"
             >
               Approve selected
             </button>
@@ -680,8 +684,8 @@ export function PurchasesPage({
                       label={`Select purchase ${purchase.itemName}`}
                     />
                     <td className="px-2 py-3 font-medium">{purchase.itemName}</td>
-                    <td className="px-2 py-3">{purchase.category}</td>
-                    <td className="px-2 py-3">{purchase.reference || "-"}</td>
+                    <td className="px-2 py-3">{purchase.category || "N/A"}</td>
+                    <td className="px-2 py-3">{purchase.reference || "N/A"}</td>
                     <td className="px-2 py-3">{purchase.quantity}</td>
                     <td className="px-2 py-3">
                       <PriorityIndicator priority={purchase.priority} />
@@ -715,7 +719,7 @@ export function PurchasesPage({
                             icon={<CheckCircle className="h-4 w-4" />}
                             label="Approve purchase"
                             onClick={() => updateStatus(purchase.id, "approve")}
-                            tone="green"
+                            tone="yellow"
                           />
                         )}
                         {isAdmin &&
@@ -749,7 +753,12 @@ export function PurchasesPage({
                           <IconButton
                             icon={<XCircle className="h-4 w-4" />}
                             label="Cancel purchase"
-                            onClick={() => updateStatus(purchase.id, "cancel")}
+                            onClick={() =>
+                              setConfirmingPurchaseAction({
+                                purchase,
+                                action: "cancel",
+                              })
+                            }
                             tone="neutral"
                           />
                         )}
@@ -765,7 +774,12 @@ export function PurchasesPage({
                           <IconButton
                             icon={<Trash2 className="h-4 w-4" />}
                             label="Delete purchase"
-                            onClick={() => deletePurchase(purchase.id)}
+                            onClick={() =>
+                              setConfirmingPurchaseAction({
+                                purchase,
+                                action: "delete",
+                              })
+                            }
                             tone="red"
                           />
                         )}
@@ -822,14 +836,41 @@ export function PurchasesPage({
                   : `${bulkAction[0].toUpperCase()}${bulkAction.slice(1)} selected`
           }
           tone={
-            bulkAction === "approve" || bulkAction === "receive"
-              ? "green"
-              : bulkAction === "order" || bulkAction === "reports"
+            bulkAction === "approve" || bulkAction === "order" || bulkAction === "reports"
                 ? "yellow"
-                : "red"
+                : bulkAction === "receive"
+                  ? "green"
+                  : "red"
           }
           onClose={() => setBulkAction(null)}
           onConfirm={handleBulkPurchaseAction}
+        />
+      )}
+      {confirmingPurchaseAction && (
+        <BulkConfirmModal
+          title={
+            confirmingPurchaseAction.action === "cancel"
+              ? `Cancel purchase request for ${confirmingPurchaseAction.purchase.itemName}?`
+              : `Delete purchase request for ${confirmingPurchaseAction.purchase.itemName}?`
+          }
+          message={
+            confirmingPurchaseAction.action === "cancel"
+              ? `Cancel purchase request for ${confirmingPurchaseAction.purchase.itemName}?`
+              : `Delete purchase request for ${confirmingPurchaseAction.purchase.itemName}?`
+          }
+          confirmLabel={
+            confirmingPurchaseAction.action === "cancel" ? "Cancel request" : "Delete"
+          }
+          tone={confirmingPurchaseAction.action === "cancel" ? "red" : "red"}
+          onClose={() => setConfirmingPurchaseAction(null)}
+          onConfirm={async () => {
+            if (confirmingPurchaseAction.action === "cancel") {
+              await updateStatus(confirmingPurchaseAction.purchase.id, "cancel")
+            } else {
+              await deletePurchase(confirmingPurchaseAction.purchase.id)
+            }
+            setConfirmingPurchaseAction(null)
+          }}
         />
       )}
       {reportPurchase && (
@@ -857,12 +898,12 @@ function PurchaseStatusBadge({ status }: { status: PurchaseStatus }) {
   const classes =
     status === "Received"
       ? "bg-green-100 text-green-800"
-      : status === "Cancelled"
-        ? "bg-red-100 text-red-800"
+    : status === "Cancelled"
+        ? "bg-gray-100 text-gray-800"
         : status === "Ordered" || status === "In Transit"
           ? "bg-blue-100 text-blue-800"
           : status === "Approved"
-            ? "bg-purple-100 text-purple-800"
+            ? "bg-green-100 text-green-800"
             : "bg-yellow-100 text-yellow-800"
 
   return (

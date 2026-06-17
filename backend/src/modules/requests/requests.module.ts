@@ -4,6 +4,7 @@ import { Collaborator } from "../collaborators/collaborator.entity"
 import { RatingHistory } from "../collaborators/rating-history.entity"
 import { Part } from "../parts/part.entity"
 import { NotificationsModule } from "../notifications/notifications.module"
+import { SettingsModule } from "../settings/settings.module"
 import { PartRequest } from "./part-request.entity"
 import { RequestsController } from "./requests.controller"
 import { RequestsService } from "./requests.service"
@@ -12,6 +13,7 @@ import { RequestsService } from "./requests.service"
   imports: [
     TypeOrmModule.forFeature([PartRequest, Part, Collaborator, RatingHistory]),
     NotificationsModule,
+    SettingsModule,
   ],
   controllers: [RequestsController],
   providers: [RequestsService],

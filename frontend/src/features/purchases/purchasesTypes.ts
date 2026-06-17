@@ -18,6 +18,7 @@ export type PurchaseDivision =
 export type Purchase = {
   id: number
   sourcePartId: number | null
+  sourceMissingItemRequestId: number | null
   itemName: string
   category: string
   manufacturer: string

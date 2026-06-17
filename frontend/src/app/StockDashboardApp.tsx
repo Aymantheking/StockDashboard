@@ -139,6 +139,7 @@ function normalizePart(part: Part): Part {
     location: part.location || "",
     description: part.description || "",
     stockAllocationNote: part.stockAllocationNote || "",
+    imageData: part.imageData || "",
     status: part.status || "",
   }
 }
@@ -192,6 +193,31 @@ function App() {
   const [usersError, setUsersError] = useState<string | null>(null)
   const [appSettings, setAppSettings] = useState<AppSettings>({
     lowStockThreshold: 5,
+    lateReturnPenaltyStars: 0.5,
+    damagedItemPenaltyStars: 1,
+    stockLocations: [
+      "Office",
+      "Laboratory",
+      "Room 1",
+      "Cabinet C1",
+      "Cabinet C2",
+      "Receiving Area",
+    ],
+    inventoryCategories: [
+      "Microprocessors",
+      "Microcontrollers",
+      "PCBs",
+      "Sensors",
+      "Actuators",
+      "Development Boards",
+      "Communication Modules",
+      "Connectors",
+      "Cables",
+      "Power Modules",
+      "Test Equipment",
+      "Tools",
+      "Other",
+    ],
     appName: "Bertrandt Inventory System",
   })
   const [settingsError, setSettingsError] = useState<string | null>(null)
@@ -370,7 +396,17 @@ function App() {
         throw new Error("Failed to load settings")
       }
 
-      setAppSettings((await response.json()) as AppSettings)
+      const data = (await response.json()) as Partial<AppSettings>
+      setAppSettings((current) => ({
+        ...current,
+        ...data,
+        stockLocations: data.stockLocations?.length
+          ? data.stockLocations
+          : current.stockLocations,
+        inventoryCategories: data.inventoryCategories?.length
+          ? data.inventoryCategories
+          : current.inventoryCategories,
+      }))
     } catch {
       setSettingsError("Failed to load settings")
     }
@@ -681,6 +717,8 @@ function App() {
               reloadRequests={loadRequests}
               reloadNotificationSummary={loadNotificationSummary}
               lowStockThreshold={appSettings.lowStockThreshold}
+              stockLocations={appSettings.stockLocations}
+              inventoryCategories={appSettings.inventoryCategories}
             />
           )}
           {activeVisiblePage === "Reservations" && (
@@ -751,6 +789,7 @@ function App() {
               isLoadingRequests={isLoadingRequests}
               requestsError={requestsError}
               reloadParts={loadParts}
+              reloadPurchases={loadPurchases}
               reloadRequests={loadRequests}
               reloadAnalytics={loadAnalytics}
               setRequestsError={setRequestsError}
@@ -787,6 +826,7 @@ function App() {
                 setRequestsError={setRequestsError}
                 highlightTarget={highlightTarget}
                 reloadNotificationSummary={loadNotificationSummary}
+                inventoryCategories={appSettings.inventoryCategories}
               />
             )}
           {activeVisiblePage === "Settings" && (

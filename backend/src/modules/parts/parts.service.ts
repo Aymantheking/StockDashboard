@@ -92,11 +92,7 @@ export class PartsService implements OnModuleInit {
   }
 
   async create(input: PartInput) {
-    const normalizedInput = await this.normalizePartInput({
-      ...input,
-      reservedQuantity: 0,
-      borrowedQuantity: 0,
-    })
+    const normalizedInput = await this.normalizePartInput(input)
     this.validatePartInput(normalizedInput, null)
 
     const part = this.partsRepository.create(normalizedInput)
@@ -108,8 +104,6 @@ export class PartsService implements OnModuleInit {
     const normalizedInput = await this.normalizePartInput({
       ...part,
       ...input,
-      reservedQuantity: part.reservedQuantity,
-      borrowedQuantity: part.borrowedQuantity,
     })
     this.validatePartInput(normalizedInput, part)
 
@@ -126,24 +120,35 @@ export class PartsService implements OnModuleInit {
   private async migrateLegacyRows() {
     const parts = await this.partsRepository.find()
     const migratedParts = parts
-      .filter((part) => part.totalQuantity === 0 && part.quantity > 0)
+      .filter(
+        (part) =>
+          (part.totalQuantity === 0 && part.quantity > 0) ||
+          this.isGeneratedPurchaseReference(part.reference)
+      )
       .map((part) => {
         const legacyQuantity = Number(part.quantity || 0)
         const legacyStatus = part.status || "Available"
 
-        part.totalQuantity = legacyQuantity
-        part.availableQuantity =
-          legacyStatus === "Available" || legacyStatus === "Low Stock"
-            ? legacyQuantity
-            : 0
-        part.reservedQuantity =
-          legacyStatus === "Reserved" ? legacyQuantity : 0
-        part.borrowedQuantity =
-          legacyStatus === "Borrowed" ? legacyQuantity : 0
-        part.damagedQuantity =
-          legacyStatus === "Damaged" ? legacyQuantity : 0
+        if (part.totalQuantity === 0 && part.quantity > 0) {
+          part.totalQuantity = legacyQuantity
+          part.availableQuantity =
+            legacyStatus === "Available" || legacyStatus === "Low Stock"
+              ? legacyQuantity
+              : 0
+          part.reservedQuantity =
+            legacyStatus === "Reserved" ? legacyQuantity : 0
+          part.borrowedQuantity =
+            legacyStatus === "Borrowed" ? legacyQuantity : 0
+          part.damagedQuantity =
+            legacyStatus === "Damaged" ? legacyQuantity : 0
 
-        this.syncLegacyFields(part)
+          this.syncLegacyFields(part)
+        }
+
+        if (this.isGeneratedPurchaseReference(part.reference)) {
+          part.reference = ""
+        }
+
         return part
       })
 
@@ -173,7 +178,9 @@ export class PartsService implements OnModuleInit {
       damagedQuantity: Number(damagedQuantity),
       quantity: Number(availableQuantity),
       manufacturer: input.manufacturer || "",
+      reference: input.reference?.trim() || "",
       description: input.description || "",
+      imageData: input.imageData || "",
       stockAllocationNote: input.stockAllocationNote || "",
     } as Part
 
@@ -188,10 +195,6 @@ export class PartsService implements OnModuleInit {
 
     if (!input.category || typeof input.category !== "string") {
       throw new BadRequestException("category is required")
-    }
-
-    if (!input.reference || typeof input.reference !== "string") {
-      throw new BadRequestException("reference is required")
     }
 
     const quantities = [
@@ -280,5 +283,9 @@ export class PartsService implements OnModuleInit {
       part.totalQuantity === 0 || part.availableQuantity === 0
         ? "Not Available"
         : "Available"
+  }
+
+  private isGeneratedPurchaseReference(reference: string | null | undefined) {
+    return /^(PUR|PURCHASE)-\d+$/i.test(reference?.trim() || "")
   }
 }

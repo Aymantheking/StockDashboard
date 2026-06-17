@@ -16,6 +16,7 @@ import { Purchase, PurchasePriority, PurchaseStatus } from "./purchase.entity"
 
 type PurchaseInput = {
   sourcePartId?: number | null
+  sourceMissingItemRequestId?: number | null
   itemName: string
   category: string
   manufacturer?: string
@@ -145,6 +146,7 @@ export class PurchasesService {
       priority: input.priority,
       requestedById: user.id,
       sourcePartId: sourcePart?.id || null,
+      sourceMissingItemRequestId: input.sourceMissingItemRequestId || null,
       division,
       supplierName: input.supplierName?.trim() || "",
       supplierContact: input.supplierContact?.trim() || "",
@@ -282,7 +284,7 @@ export class PurchasesService {
           name: purchase.itemName,
           category: purchase.category,
           manufacturer: purchase.manufacturer,
-          reference: purchase.reference || `PUR-${purchase.id}`,
+          reference: purchase.reference || "",
           totalQuantity: purchase.quantity,
           availableQuantity: purchase.quantity,
           reservedQuantity: 0,
@@ -493,6 +495,12 @@ export class PurchasesService {
     ) {
       throw new ForbiddenException("Purchase source cannot be changed")
     }
+    if (
+      input.sourceMissingItemRequestId !== undefined &&
+      input.sourceMissingItemRequestId !== purchase.sourceMissingItemRequestId
+    ) {
+      throw new ForbiddenException("Purchase source cannot be changed")
+    }
 
     if (!purchase.sourcePartId) {
       return
@@ -540,6 +548,7 @@ export class PurchasesService {
   private getDefinedPurchaseInput(input: Partial<PurchaseInput>) {
     const allowedFields: Array<keyof PurchaseInput> = [
       "sourcePartId",
+      "sourceMissingItemRequestId",
       "itemName",
       "category",
       "manufacturer",
@@ -592,7 +601,7 @@ export class PurchasesService {
     return this.notificationsService.notifyAdmins(
       {
         title: "New purchase request",
-        message: `Purchase request for ${purchase.itemName} requires approval.`,
+        message: `New purchase request from ${user.name || user.email}`,
         type: NotificationType.PurchaseRequestCreated,
         targetPage: "Purchase",
         targetSection: "PurchaseRequests",

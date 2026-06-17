@@ -66,6 +66,8 @@ export function CollaboratorsPage({
   const [isModalOpen, setIsModalOpen] = useState(false)
   const [editingCollaborator, setEditingCollaborator] =
     useState<Collaborator | null>(null)
+  const [deletingCollaborator, setDeletingCollaborator] =
+    useState<Collaborator | null>(null)
   const [ratingHistoryCollaborator, setRatingHistoryCollaborator] =
     useState<Collaborator | null>(null)
   const [isBulkDeleteOpen, setIsBulkDeleteOpen] = useState(false)
@@ -316,7 +318,7 @@ export function CollaboratorsPage({
                             <IconButton
                               icon={<Trash2 className="h-4 w-4" />}
                               label="Delete collaborator"
-                              onClick={() => handleDelete(collaborator.id)}
+                              onClick={() => setDeletingCollaborator(collaborator)}
                               tone="red"
                             />
                           )}
@@ -377,6 +379,18 @@ export function CollaboratorsPage({
           collaborator={ratingHistoryCollaborator}
           reloadCollaborators={reloadCollaborators}
           onClose={() => setRatingHistoryCollaborator(null)}
+        />
+      )}
+      {deletingCollaborator && (
+        <BulkConfirmModal
+          title={`Delete ${deletingCollaborator.name}?`}
+          message={`Delete collaborator ${deletingCollaborator.name}?`}
+          confirmLabel="Delete"
+          onClose={() => setDeletingCollaborator(null)}
+          onConfirm={async () => {
+            await handleDelete(deletingCollaborator.id)
+            setDeletingCollaborator(null)
+          }}
         />
       )}
       {isBulkDeleteOpen && (

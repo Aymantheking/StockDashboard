@@ -66,11 +66,24 @@ export function SettingsPage({
   const [lowStockThreshold, setLowStockThreshold] = useState(
     appSettings.lowStockThreshold
   )
+  const [lateReturnPenaltyStars, setLateReturnPenaltyStars] = useState(
+    appSettings.lateReturnPenaltyStars
+  )
+  const [damagedItemPenaltyStars, setDamagedItemPenaltyStars] = useState(
+    appSettings.damagedItemPenaltyStars
+  )
+  const [stockLocations, setStockLocations] = useState(
+    appSettings.stockLocations
+  )
+  const [inventoryCategories, setInventoryCategories] = useState(
+    appSettings.inventoryCategories
+  )
   const [verificationPage, setVerificationPage] = useState(1)
   const [usersPage, setUsersPage] = useState(1)
   const [bulkVerificationAction, setBulkVerificationAction] = useState<
     "verify" | "reject" | null
   >(null)
+  const [rejectingUser, setRejectingUser] = useState<AuthUser | null>(null)
 
   useEffect(() => {
     if (!selectedUser) {
@@ -83,7 +96,11 @@ export function SettingsPage({
 
   useEffect(() => {
     setLowStockThreshold(appSettings.lowStockThreshold)
-  }, [appSettings.lowStockThreshold])
+    setLateReturnPenaltyStars(appSettings.lateReturnPenaltyStars)
+    setDamagedItemPenaltyStars(appSettings.damagedItemPenaltyStars)
+    setStockLocations(appSettings.stockLocations)
+    setInventoryCategories(appSettings.inventoryCategories)
+  }, [appSettings])
 
   async function handleSaveAssignment() {
     if (!selectedUser) {
@@ -139,6 +156,75 @@ export function SettingsPage({
     } catch {
       setSettingsSuccess("")
       setSettingsError("Failed to update low stock threshold")
+    }
+  }
+
+  async function handleSaveRatingRules() {
+    try {
+      setSettingsError(null)
+      setSettingsSuccess("")
+      const response = await apiFetch(`${SETTINGS_API_URL}/rating-rules`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          lateReturnPenaltyStars,
+          damagedItemPenaltyStars,
+        }),
+      })
+
+      if (!response.ok) {
+        throw new Error("Failed to update rating rules")
+      }
+
+      await apiReloadSettings()
+      setSettingsSuccess("Rating rules saved.")
+    } catch {
+      setSettingsSuccess("")
+      setSettingsError("Failed to update rating rules")
+    }
+  }
+
+  async function handleSaveStockLocations() {
+    try {
+      setSettingsError(null)
+      setSettingsSuccess("")
+      const response = await apiFetch(`${SETTINGS_API_URL}/stock-locations`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ stockLocations }),
+      })
+
+      if (!response.ok) {
+        throw new Error("Failed to update stock locations")
+      }
+
+      await apiReloadSettings()
+      setSettingsSuccess("Stock locations saved.")
+    } catch {
+      setSettingsSuccess("")
+      setSettingsError("Failed to update stock locations")
+    }
+  }
+
+  async function handleSaveInventoryCategories() {
+    try {
+      setSettingsError(null)
+      setSettingsSuccess("")
+      const response = await apiFetch(`${SETTINGS_API_URL}/inventory-categories`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ inventoryCategories }),
+      })
+
+      if (!response.ok) {
+        throw new Error("Failed to update inventory categories")
+      }
+
+      await apiReloadSettings()
+      setSettingsSuccess("Inventory categories saved.")
+    } catch {
+      setSettingsSuccess("")
+      setSettingsError("Failed to update inventory categories")
     }
   }
 
@@ -260,7 +346,7 @@ export function SettingsPage({
           <button
             onClick={handleSaveAssignment}
             disabled={!selectedUser}
-            className="bg-yellow-400 text-black font-semibold px-4 py-2 rounded disabled:opacity-60"
+            className="w-fit self-end rounded bg-yellow-400 px-4 py-2 font-semibold text-black disabled:opacity-60"
           >
             Save Assignment
           </button>
@@ -302,6 +388,72 @@ export function SettingsPage({
           </button>
         </div>
       </div>
+
+      <div className="bg-white rounded-lg shadow p-6 mb-8">
+        <h3 className="mb-4 text-xl font-bold">Rating Rules</h3>
+        <div className="grid gap-4 md:grid-cols-3">
+          <label className="block">
+            <span className="mb-1 block text-sm font-semibold text-gray-700">
+              Stars deducted for late return
+            </span>
+            <input
+              type="number"
+              min={0}
+              max={5}
+              step={0.5}
+              value={lateReturnPenaltyStars}
+              onChange={(event) =>
+                setLateReturnPenaltyStars(Number(event.target.value))
+              }
+              className="w-full rounded border px-4 py-2"
+            />
+          </label>
+          <label className="block">
+            <span className="mb-1 block text-sm font-semibold text-gray-700">
+              Stars deducted per damaged item return
+            </span>
+            <input
+              type="number"
+              min={0}
+              max={5}
+              step={0.5}
+              value={damagedItemPenaltyStars}
+              onChange={(event) =>
+                setDamagedItemPenaltyStars(Number(event.target.value))
+              }
+              className="w-full rounded border px-4 py-2"
+            />
+          </label>
+          <button
+            onClick={handleSaveRatingRules}
+            disabled={
+              lateReturnPenaltyStars < 0 ||
+              lateReturnPenaltyStars > 5 ||
+              damagedItemPenaltyStars < 0 ||
+              damagedItemPenaltyStars > 5
+            }
+            className="w-fit self-end rounded bg-yellow-400 px-4 py-2 font-semibold text-black disabled:opacity-60"
+          >
+            Save Rating Rules
+          </button>
+        </div>
+      </div>
+
+      <SettingsListSection
+        title="Stock Locations"
+        values={stockLocations}
+        onChange={setStockLocations}
+        onSave={handleSaveStockLocations}
+        addLabel="Add location"
+      />
+
+      <SettingsListSection
+        title="Inventory Categories"
+        values={inventoryCategories}
+        onChange={setInventoryCategories}
+        onSave={handleSaveInventoryCategories}
+        addLabel="Add category"
+      />
 
       <div
         id="UserVerification"
@@ -378,7 +530,7 @@ export function SettingsPage({
                     <IconButton
                       icon={<XCircle className="h-4 w-4" />}
                       label="Reject user"
-                      onClick={() => updateVerificationStatus(user.id, "reject")}
+                      onClick={() => setRejectingUser(user)}
                       tone="red"
                     />
                   </div>
@@ -465,7 +617,178 @@ export function SettingsPage({
           onConfirm={handleBulkVerification}
         />
       )}
+      {rejectingUser && (
+        <BulkConfirmModal
+          title={`Reject ${rejectingUser.name}?`}
+          message={`Reject user verification for ${rejectingUser.email}?`}
+          confirmLabel="Reject"
+          tone="red"
+          commentLabel="Rejection reason"
+          onClose={() => setRejectingUser(null)}
+          onConfirm={async () => {
+            await updateVerificationStatus(rejectingUser.id, "reject")
+            setRejectingUser(null)
+          }}
+        />
+      )}
     </>
+  )
+}
+
+function SettingsListSection({
+  title,
+  values,
+  onChange,
+  onSave,
+  addLabel,
+}: {
+  title: string
+  values: string[]
+  onChange: (values: string[]) => void
+  onSave: () => void
+  addLabel: string
+}) {
+  const cleanedValues = values
+    .map((value) => value.trim())
+    .filter(Boolean)
+  const [deletingIndex, setDeletingIndex] = useState<number | null>(null)
+  const [isAddOpen, setIsAddOpen] = useState(false)
+  const [newValue, setNewValue] = useState("")
+  const [addError, setAddError] = useState("")
+
+  const itemLabel = title === "Stock Locations" ? "Stock Location" : "Category"
+  const hasDuplicates =
+    new Set(cleanedValues.map((value) => value.toLowerCase())).size !==
+    cleanedValues.length
+
+  function removeValue(index: number) {
+    onChange(cleanedValues.filter((_, itemIndex) => itemIndex !== index))
+  }
+
+  function addValue() {
+    const trimmedValue = newValue.trim()
+    if (!trimmedValue) {
+      setAddError(`${itemLabel} name is required.`)
+      return
+    }
+    if (
+      cleanedValues.some(
+        (value) => value.toLowerCase() === trimmedValue.toLowerCase()
+      )
+    ) {
+      setAddError(`${itemLabel} already exists.`)
+      return
+    }
+
+    onChange([...cleanedValues, trimmedValue])
+    setNewValue("")
+    setAddError("")
+    setIsAddOpen(false)
+  }
+
+  return (
+    <div className="mb-8 rounded-lg bg-white p-6 shadow">
+      <h3 className="mb-4 text-xl font-bold">{title}</h3>
+      <div className="flex flex-wrap gap-2">
+        {cleanedValues.length > 0 ? (
+          cleanedValues.map((value, index) => (
+            <span
+              key={`${title}-${value}`}
+              className="inline-flex items-center gap-2 rounded-full border border-gray-200 bg-gray-50 px-3 py-1 text-sm font-medium text-gray-700"
+            >
+              {value}
+              <button
+                type="button"
+                onClick={() => setDeletingIndex(index)}
+                title={`Delete ${value}`}
+                aria-label={`Delete ${value}`}
+                className="inline-flex h-5 w-5 items-center justify-center rounded-full text-gray-500 hover:bg-red-100 hover:text-red-700"
+              >
+                x
+              </button>
+            </span>
+          ))
+        ) : (
+          <p className="text-sm text-gray-500">No {title.toLowerCase()} configured.</p>
+        )}
+      </div>
+      <div className="mt-4 flex flex-wrap gap-3">
+        <button
+          onClick={() => {
+            setNewValue("")
+            setAddError("")
+            setIsAddOpen(true)
+          }}
+          className="rounded border px-4 py-2"
+        >
+          {addLabel}
+        </button>
+        <button
+          onClick={onSave}
+          disabled={cleanedValues.length === 0 || hasDuplicates}
+          className="w-fit rounded bg-yellow-400 px-4 py-2 font-semibold text-black disabled:opacity-60"
+        >
+          Save {title}
+        </button>
+      </div>
+      {hasDuplicates && (
+        <p className="mt-2 text-sm text-red-600">
+          Duplicate {title.toLowerCase()} are not allowed.
+        </p>
+      )}
+      {isAddOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+          <div className="w-full max-w-sm rounded-lg bg-white p-6 shadow-xl">
+            <h3 className="mb-4 text-xl font-bold">Add {itemLabel}</h3>
+            <label className="block">
+              <span className="mb-1 block text-sm font-semibold text-gray-700">
+                {itemLabel} name
+              </span>
+              <input
+                value={newValue}
+                onChange={(event) => {
+                  setNewValue(event.target.value)
+                  setAddError("")
+                }}
+                className="w-full rounded border px-4 py-2"
+                autoFocus
+              />
+            </label>
+            {addError && <p className="mt-2 text-sm text-red-600">{addError}</p>}
+            <div className="mt-6 flex justify-end gap-3">
+              <button
+                onClick={() => {
+                  setIsAddOpen(false)
+                  setNewValue("")
+                  setAddError("")
+                }}
+                className="rounded border px-4 py-2"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={addValue}
+                className="rounded bg-yellow-400 px-4 py-2 font-semibold text-black"
+              >
+                Add
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+      {deletingIndex !== null && (
+        <BulkConfirmModal
+          title={`Delete ${cleanedValues[deletingIndex]}?`}
+          message={`Delete ${cleanedValues[deletingIndex]} from ${title}?`}
+          confirmLabel="Delete"
+          onClose={() => setDeletingIndex(null)}
+          onConfirm={() => {
+            removeValue(deletingIndex)
+            setDeletingIndex(null)
+          }}
+        />
+      )}
+    </div>
   )
 }
 

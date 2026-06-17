@@ -14,8 +14,11 @@ export type Part = {
   damagedQuantity: number
   location: string
   description: string
+  imageData?: string
   stockAllocationNote: string
   status: string
+  createdAt?: string
+  updatedAt?: string
 }
 
 export type Collaborator = {

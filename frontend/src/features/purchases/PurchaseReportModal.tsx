@@ -22,9 +22,9 @@ function getPurchaseReportRows(purchase: Purchase, createdBy: string) {
   return [
     ["Purchase ID", purchase.id],
     ["Item name", purchase.itemName],
-    ["Category", purchase.category],
-    ["Manufacturer", purchase.manufacturer || "-"],
-    ["Reference", purchase.reference || "-"],
+    ["Category", purchase.category || "N/A"],
+    ["Manufacturer", purchase.manufacturer || "N/A"],
+    ["Reference", purchase.reference || "N/A"],
     ["Quantity", purchase.quantity],
     ["Criticality", purchase.priority],
     ["Division", purchase.division],

@@ -66,6 +66,9 @@ export class Purchase {
   @Column({ nullable: true, type: "int" })
   sourcePartId: number | null
 
+  @Column({ nullable: true, type: "int" })
+  sourceMissingItemRequestId: number | null
+
   @Column({
     type: "enum",
     enum: Division,
